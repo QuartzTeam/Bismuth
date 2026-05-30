@@ -1,0 +1,546 @@
+# Bismuth — Developer Reference
+
+A HarmonyX / UnityModManager overlay mod for **A Dance of Fire and Ice (ADOFAI)**.  
+Build: `xbuild Bismuth.sln` (Mono, .NET 4.8). Three expected warnings (toolset version, TextCoreModule ref).
+
+## TODO
+
+- ADOFAI updated to Unity 6 in alpha testing and has major codebase changes. Once released, mod needs to be re-developed.
+
+---
+
+## Log locations
+
+| Log | Path |
+| --- | ---- |
+| UMM log (`modEntry.Logger.Log`) | `…/ADanceOfFireAndIce.app/Contents/Resources/Data/Managed/UnityModManager/Log.txt` |
+| Unity player log (`Debug.Log`) | `~/Library/Logs/7th Beat Games/A Dance of Fire and Ice/Player.log` |
+| Bismuth log (`BismuthLog.Log`) | `<ModPath>/BismuthLog.txt` (mod folder; e.g. `…/Mods/Bismuth/BismuthLog.txt`) |
+
+Full UMM path: `/Users/preluminance/Library/Application Support/Steam/steamapps/common/A Dance of Fire and Ice/ADanceOfFireAndIce.app/Contents/Resources/Data/Managed/UnityModManager/Log.txt`
+
+`BismuthLog.txt` is cleared and re-created each session (on `StartMod`). Call `BismuthLog.Log("message")` from anywhere — swallows IO errors silently.
+
+---
+
+## Files
+
+Sources live in subfolders under `Bismuth/`. Several classes are split into `partial`s; each part is a separate file. Folder map:
+
+```text
+Bismuth/
+├── MainClass.cs              UMM entry point — loads settings, creates Overlay + KeyViewer, wires GUI callbacks
+├── Startup.cs                Early-init hooks (font preload, etc.)
+├── KeyViewer/
+│   ├── KeyViewer.cs          partial: class shell, state fields, internal cell/column types, lifecycle
+│   ├── KeyViewer.Build.cs    partial: BuildLayout / BuildPresetPanel / cell + layer construction
+│   ├── KeyViewer.Rain.cs     partial: per-frame Update, StartRainColumn / StopRainColumn
+│   ├── KeyViewer.Sprites.cs  partial: rounded sprite + shadow body sprites + shadow tip texture + gradient texture
+│   ├── KeyViewer.Keys.cs     partial: TryParseKey + GetDisplayName
+│   └── KeyLimiter.cs         Harmony patches limiting input to active preset keys (sync + async/SkyHook paths)
+├── Overlay/
+│   ├── Overlay.cs            partial: class shell, state, lifecycle (Awake/OnDestroy/scene hooks), helpers
+│   ├── Overlay.Build.cs      partial: UGUI tree construction (canvas, containers, rows, combo, FPS, judgements)
+│   ├── Overlay.Update.cs     partial: per-frame Update + UpdateDisplay
+│   ├── Overlay.Game.cs       partial: OnAttempt, OnLevelStart, OnLevelEnd, ShowEmpty, SetFont, ResetAttempts
+│   ├── Overlay.Apply.cs      partial: ApplySettings, PlaceRows, Attach, ShowOrHideElements, ApplyLevelNameTransform
+│   └── ColorGradient.cs      `ColorGradient` / `ColorStop` types + `Evaluate(t)`
+├── Settings/
+│   ├── Settings.cs           All serialized mod settings + gradient/preset defaults
+│   ├── SettingsInput.cs      Shared input widgets (deferred-commit text, Slider with undo button)
+│   ├── SettingsGui.cs        partial: entry point + shared state fields + nav-state reset
+│   ├── SettingsGui.Overlay.cs    partial: overlay stat rows
+│   ├── SettingsGui.Combo.cs      partial: combo display section
+│   ├── SettingsGui.KeyViewer.cs  partial: key viewer category + preset edit page + KV color editor
+│   ├── SettingsGui.KeyLimiter.cs partial: key limiter section
+│   ├── SettingsGui.HideUi.cs     partial: hide UI toggles
+│   ├── SettingsGui.Tweaks.cs     partial: tweaks + optimizations + font + misc
+│   ├── SettingsGui.Gradient.cs   partial: gradient + color-stop editors
+│   └── SettingsGui.Helpers.cs    partial: Indent / W / WMax / DrawSwatch / hex / position buttons / SliderRow shim
+├── Patches/
+│   ├── Patches.cs            HarmonyX prefix/postfix patches for overlay/judgement/UI hooks
+│   └── Optimizations.cs      Performance tweak patches (texture, physics, DOTween, etc.)
+└── Util/
+    ├── AttemptsStore.cs      Persists per-level attempt counts to `BismuthAttempts.txt`
+    ├── BismuthLog.cs         File-based session logger → `BismuthLog.txt`
+    └── FontLoader.cs         Scans for fonts and exposes them to the GUI
+```
+
+When adding a new section to the settings GUI, follow the partial-file pattern: put state-fields/Draw entry calls in the section partial, expose a `Draw<Name>Section(settings, ref changed)` helper, and call it from `Draw()` in `SettingsGui.cs`. The class shell in each partial uses `internal static partial class SettingsGui` (or `internal/public partial class …` for `KeyViewer` / `Overlay`).
+
+---
+
+## Settings fields (`Settings.cs`)
+
+### Overlay stat rows
+
+| Field | Default | Purpose |
+| ----- | ------- | ------- |
+| `ShowOverlay` | `true` | Master toggle for all stat rows (does **not** affect combo display) |
+| `ShowProgress` | `true` | Show progress % row |
+| `ShowAcc` | `false` | Show accuracy % row |
+| `ShowXAcc` | `true` | Show X-accuracy % row |
+| `ShowBpm` | `true` | Show BPM row |
+| `ShowTileBpm` | `true` | Show tile BPM row |
+| `ShowTimingScale` | `true` | Show timing scale row |
+| `ShowJudgements` | `true` | Show hit-margin count row |
+| `ShowAttempts` | `false` | Show attempts counter |
+| `Scale` | `1.0` | Scale applied to left/right overlay columns |
+| `FontName` | `"Maplestory Bold"` | Font used for all overlay text |
+
+### Row positions (`OverlayPosition` enum: `Left` / `Right`)
+
+| Field | Default |
+| ----- | ------- |
+| `ProgressPosition` | Left |
+| `AccPosition` | Left |
+| `XAccPosition` | Left |
+| `BpmPosition` | Right |
+| `TileBpmPosition` | Right |
+
+### Attempts position
+
+| Field | Default | Purpose |
+| ----- | ------- | ------- |
+| `AttemptsX` | `0.77` | Normalized screen X anchor of the attempts container (0 = left, 1 = right) |
+| `AttemptsY` | `0.05` | Normalized screen Y anchor of the attempts container (0 = bottom, 1 = top) |
+
+### Timing Scale sub-settings
+
+| Field | Default | Purpose |
+| ----- | ------- | ------- |
+| `TimingScaleY` | `0` | Y offset of the timing scale container (px, from anchor) |
+| `TimingScaleSize` | `0.75` | Scale of the timing scale container |
+
+### Judgements sub-settings
+
+| Field | Default | Purpose |
+| ----- | ------- | ------- |
+| `JudgementsY` | `8` | Y offset of the judgements container (px) |
+| `JudgementsSize` | `0.9` | Scale of the judgements container |
+
+### Combo display
+
+| Field | Default | Purpose |
+| ----- | ------- | ------- |
+| `ShowComboDisplay` | `true` | Toggle for combo display only — independent of `ShowOverlay` |
+| `ComboDisplayY` | `0` | Y offset of the entire combo display container (px) |
+| `ComboDisplaySize` | `1.0` | Scale of the entire combo display container |
+| `ComboDisplayText` | `"Perfect Combo"` | Text shown in the combo label above the counter |
+| `ComboLabelY` | `60` | Y offset of the label wrapper relative to the counter (px) |
+| `ComboLabelSize` | `1.0` | Font size multiplier for the label (`ComboLabelBaseFontSize × size`) |
+| `ComboPulseOffsetY` | `8` | Extra Y offset (px) added to `_comboLabelWrapper` at pulse peak — label rises then settles back to `ComboLabelY` |
+| `ComboPulseScale` | `0.2` | Extra scale added to `comboDisplayValue.rectTransform` at pulse peak (`+0.2` = 20% bigger). Applies to the count text only, not the label or container |
+| `ComboPulseDuration` | `0.2` | Seconds for the pulse to decay from peak to normal |
+| `ComboCountAuto` | `false` | Whether autoplay tiles increment (but never break) the combo |
+| `ComboShadowSize` | `2` | `Shadow.effectDistance` on `comboDisplayValue` only (label keeps default) |
+| `ComboGradientMax` | `1000` | Combo count that maps to `t = 1.0` in `ComboGradient.Evaluate` |
+
+### Gradients
+
+| Field | Evaluated at | Default |
+| ----- | ------------ | ------- |
+| `ProgressGradient` | `t = percentComplete` | Grey → blue; gold at 100% |
+| `AccGradient` | `t = percentAcc` (and xacc) | Red → orange → green → blue; gold at 100% |
+| `BpmGradient` | `t = bpm / 10000` | White → blue |
+| `ComboGradient` | `t = combo / ComboGradientMax` | White → blue |
+
+### Key Viewer
+
+Two independent panels — **Hand** and **Foot** — each driven by its own active preset from independent lists.
+
+| Field | Default | Purpose |
+| ----- | ------- | ------- |
+| `KvHandPresets` | 10k / 12k / 16k | Hand preset list |
+| `KvFootPresets` | 2k | Foot preset list |
+| `KvActiveHand` | `1` (12k) | Index into `KvHandPresets` |
+| `KvActiveFoot` | `0` | Index into `KvFootPresets` |
+| `ShowHandViewer` | `true` | Master toggle for the hand panel |
+| `ShowFootViewer` | `false` | Master toggle for the foot panel |
+
+`Settings.Hand` / `Settings.Foot` (XmlIgnore properties) resolve the active preset for each category; both can be `null` if the list is empty.
+
+#### KeyViewerPreset
+
+| Field | Default | Purpose |
+| ----- | ------- | ------- |
+| `Name` | `"Preset"` | Display name in selector |
+| `PersistCounts` | `true` | Save/load per-key totals to `keycounts.txt`; honoured if **either** active preset opts in |
+| `Rows` | _set by Make…Preset_ | Ordered `KeyViewerRow` list (top row defines panel width) |
+| `KeyWidth` | `60` | Top-row key width in px; lower rows stretch to match top width |
+| `Radius` | `8` | Rounded-corner radius for cell sprite (per-preset sprite) |
+| `Gap` | `4` | Inner gap subtracted from each cell's size; also offsets rain start |
+| `X`, `Y` | `0.01`, `0.01` | Canvas anchor (0–1) of bottom-left of the panel |
+| `Scale` | `1.0` | `localScale` of the panel |
+| `RainDistance` | `300` | "Fade Start" — distance from panel top where the rain tip's gradient begins |
+| `RainTrackLength` | `390` | Total track length (px). Rain destroyed past this. Fade zone = `TrackLength − Distance` |
+| `RainSpeed` | `500` | px/sec |
+| `RainWidthStep` | `14` | px narrower per row depth (row 0 = full keyWidth) |
+| `RainShadowSize` | `0` | Soft-blur radius for the shadow halo on each side of the rain (`0` = off) |
+| `RainShadowColor` | `(0,0,0,0.05)` | Shadow color when `RainShadowSize > 0` |
+| `BgIdle` / `BgHeld` | black 0.7α / white | Cell background colors |
+| `TxtIdle` / `TxtHeld` | white / black | Cell label text colors |
+| `LabelSize` | `16` | Cell label font size |
+| `CountIdle` / `CountHeld` | gray / black | Cell count text colors |
+| `CountSize` | `13` | Cell count font size |
+| `ShowLabel` / `ShowCount` | `true` / `true` | When one is off the other fills the whole cell (visually centers). When off, the corresponding `Text` is not created at all |
+| `GhostKeysEnabled` | `false` | When true, ghost keys spawn rain only. No key cell, not counted as input, never trigger tile hits |
+| `GhostKeys` | `null` | Token list indexed against the top row's non-stat cells. `"None"` / empty = unassigned. Auto-resized by the GUI to match top-row cell count |
+| `GhostRainColor` | `null` | Per-preset rain tint for ghost-key presses. `null` = built-in default `(1.0, 0.9, 0.0, 1.0)` (yellow); applied in `BuildPresetPanel` |
+
+#### KeyViewerRow
+
+| Field | Default | Purpose |
+| ----- | ------- | ------- |
+| `Cells` | _empty_ | Ordered `List<KeyViewerCell>`. One cell per visible key slot. Edited via the grid widget in the preset edit page |
+| `Height` | `60` | Row height in px |
+| `RainColor` | `null` | Override per-row rain tint. `null` = white default |
+| `ShowRain` | `true` | Per-row rain enable; falls back to white if `RainColor` is null |
+
+#### KeyViewerCell
+
+| Field | Default | Purpose |
+| ----- | ------- | ------- |
+| `Token` | _required_ | KeyViewer token (e.g. `"A"`, `"LShift"`, `"KPS"`, `"Total"`) — parsed via `KeyViewer.TryParseKey` |
+| `Label` | `null` | Optional override for the cell's display text. `null` = use the token's default label |
+| `WidthMul` | `1.0` | Per-cell width multiplier. Top-row visible widths distribute by `WidthMul / Σ WidthMul`; lower-row slot widths use the same. Editing one cell's width auto-syncs its mirror (`Cells[N-1-i]`) for symmetry |
+
+Token parsing: `KeyViewer.TryParseKey` maps friendly names (`Tab`, `LShift`, `LCmd` / `RCmd`, `[`, `,`, etc.) and bare letters/digits to `KeyCode`s. Other tokens fall through to `Enum.Parse(KeyCode, …, true)`.
+
+### Key Limiter / Chatter Blocker (`Settings.cs` + `KeyLimiter.cs`)
+
+| Field | Default | Purpose |
+| ----- | ------- | ------- |
+| `KeyLimiterEnabled` | `true` | Master toggle for the allowed-key filter |
+| `KeyLimiterUseKvKeys` | `true` | If true, allowed set = union of active hand + foot preset keys; else parse `KeyLimiterCustomKeys` |
+| `KeyLimiterCustomKeys` | `""` | Space/comma-separated key tokens (same parser as KeyViewer) |
+| `ChatterBlockerEnabled` | `false` | Master toggle for chatter suppression |
+| `ChatterThresholdMs` | `30` | If a press fires within this many milliseconds of the same key's previous accepted press, it is silently dropped |
+
+Implementation: `KeyLimiter.Apply(settings)` populates `_allowed: HashSet<KeyCode>` and `_allowedLabels: HashSet<ushort>` (SkyHook `KeyLabel` enum values, obtained via reflection on `SkyHook.AsyncKeyMapper.UnityKeyToAsyncKey`).
+
+The KeyLimiter, ChatterBlocker, and Ghost-key suppression all share a single press-list iteration in `CountAllowedInPressedKeys` and a single `RDInput.GetMain` postfix.
+
+**Ghost-key suppression** is collected at `Apply` time from the active hand preset's `GhostKeys` into `_ghosts: HashSet<KeyCode>`. It always applies — independent of the limiter / chatter toggles — so pressing a ghost key never registers as a tile hit. The postfix gate fires when any of `_active`, `_chatterActive`, or `_ghosts.Count > 0` is true.
+
+1. **`RDInput.GetMain(int state)` postfix** — fires when either filter is enabled (`_active || _chatterActive`), state = `ButtonState.Down`, and we're not re-entering. Clamps `__result` to `CountAllowedInPressedKeys()`, which iterates `RDInput.GetStateKeys(Down)` (via reflection), resolves each press to a Unity `KeyCode` (direct, async label via `AsyncKeyToUnityKey`, or HID fallback), then applies: **limiter** (drop if `_active && !allowed`) and **chatter** (drop if `_chatterActive` and the key's previous accepted-press time is within `_chatterThresholdSec`). On accept, the key's `_lastPressTime` is updated. P/Space pass when `scrController.state != PlayerControl` (death screen, pause menu, between tiles).
+2. **`scrMistakesManager.AddHit(HitMargin)` prefix** — fallback that returns `false` (suppressing the hit) if no allowed key is currently held (tolerant to 1-frame async delay using `Input.GetKey`).
+
+For the limiter's allowed-set check we always compare in the label direction (`_allowedLabels`) — `AsyncKeyToUnityKey` is ambiguous (multiple `KeyCode`s collapse to one `KeyLabel` slot). The chatter blocker still needs a Unity `KeyCode` as its state-tracking identity, so it calls `AsyncKeyToUnityKey` (best-effort) — collisions just mean a few physically distinct keys share one chatter timer, which is harmless.
+
+**Per-frame idempotency**: `CountAllowedInPressedKeys` may be called multiple times per frame (the game's own `GetMain` invocations + our `GetStateKeys` re-entry). Chatter decisions are cached in `_chatterDecisionThisFrame` (cleared when `Time.frameCount` changes) so the second call doesn't see `now - _lastPressTime[key] ≈ 0` and incorrectly reclassify an already-accepted press as chatter.
+
+**Modifier fallback (`_hidToKeyCode`)**: SkyHook's native bundle shipped with the game reports modifier-key presses with `label = KeyLabel.Unknown(119)` instead of the correct label — its internal `KeyLabel` table is older than the C# binding. To recover them, `CountAllowedInPressedKeys` consults the raw `AsyncKeyCode.key` field (USB HID Usage IDs, page 0x07 — _not_ macOS HIToolbox scancodes) when the label is `Unknown` and looks up `_hidToKeyCode`. Mapping: `0x39→CapsLock, 0xE0→LCtrl, 0xE1→LShift, 0xE2→LAlt, 0xE3→LCmd, 0xE4→RCtrl, 0xE5→RShift, 0xE6→RAlt, 0xE7→RCmd`.
+
+The `0xE1`/`0xE5` codes were confirmed via diagnostic logging — earlier guesses based on the macOS HIToolbox virtual-key table (`0x38` LShift, `0x3C` RShift, …) did not match the bundle's actual output.
+
+### Hide UI
+
+| Field | Default | Purpose |
+| ----- | ------- | ------- |
+| `HideAllUI` | `false` | Hides nearly all in-game UI (`RDC.noHud = true`); sub-options hidden from GUI when on |
+| `HideHitmeter` | `false` | Hides `scrController.errorMeter` (the hit-error bar). Re-applied on floor change / pause via `HideErrorMeter` patch |
+| `HideAutoplayText` | `false` | Hides the "status.autoplay" debug text (`scrShowIfDebug`) via temporary `RDC.auto = false` |
+| `HideAutoplayIcon` | `false` | Hides `editor.autoImage` and `editor.buttonAuto` in the editor |
+| `HideNoFail` | `false` | Hides no-fail icon (`editor.buttonNoFail`, `uic.noFailImage`) |
+| `HideDifficulty` | `false` | Hides difficulty UI (`editor.editorDifficultySelector`, `uic.difficultyImage/Container`) |
+| `HidePerfectJudgements` | `false` | Suppresses the "Perfect" floating text |
+| `HideLevelName` | `false` | Hides `txtLevelName` (song title) |
+
+### Tweaks
+
+| Field | Default | Purpose |
+| ----- | ------- | ------- |
+| `LevelNameScale` | `0.5` | `localScale` applied to `txtLevelName.rectTransform` |
+| `LevelNameY` | `45` | Additive Y offset from `_levelNameOrigPos` (px) |
+
+---
+
+## ColorGradient / ColorStop (`ColorGradient.cs`)
+
+``` docs
+ColorGradient
+  bool  IsSolid          — if true, Evaluate always returns first stop color
+  bool  HasPerfectColor  — if true AND t >= 1.0, returns (PR, PG, PB, PA)
+  float PR, PG, PB, PA   — "perfect" RGBA (used when HasPerfectColor && t >= 1)
+  List<ColorStop> Stops  — sorted by Progress
+
+ColorStop
+  float Progress  — t position in [0, 1]
+  float R, G, B, A
+```
+
+`Evaluate(t)` linearly interpolates between stops; clamps beyond first/last stop.
+
+---
+
+## Overlay UGUI hierarchy (`Overlay.cs`)
+
+``` filetree
+Canvas (ScreenSpaceOverlay, sortingOrder 999)
+├── LeftContainer      — VLG, top-left,  holds Left-position stat rows
+├── RightContainer     — VLG, top-right, holds Right-position stat rows
+├── TimingScaleContainer — VLG, anchor (0.5, 0.12) + Y offset, holds TimingScale row
+├── JudgementsContainer— HLG, anchor (0.5, 0.0) + Y offset, holds 9 margin count texts
+├── AttemptsContainer  — VLG, anchor (AttemptsX, AttemptsY), holds attempts row
+└── ComboDisplay       — anchor (0.5, 0.87) + Y offset from settings
+    ├── ComboLabelWrapper  (ignoreLayout=true, positioned by _comboLabelWrapper.anchoredPosition)
+    │   └── ComboLabel  (Text — the "Perfect Combo" line)
+    └── ComboValue      (Text — the integer counter)
+```
+
+### Key private fields
+
+| Field | Type | Purpose |
+| ----- | ---- | ------- |
+| `_attempts` | `int` | Attempt count for current level; loaded from `AttemptsStore` on level start |
+| `_currentLevelKey` | `string` | Level key (file path for custom, level code for official); null between scenes |
+| `_combo` | `int` | Current perfect-combo streak |
+| `_comboPulseT` | `float` | 1 → 0 over `ComboPulseDuration` seconds; drives label Y-offset animation |
+| `_comboLabelWrapper` | `RectTransform` | `ignoreLayout=true` wrapper; `anchoredPosition.y = ComboLabelY` |
+| `_levelNameOrigPos` | `Vector2?` | First-seen `anchoredPosition` of `txtLevelName.rectTransform`; reset on scene unload |
+| `ComboLabelBaseFontSize` | `const int = 24` | Base size multiplied by `ComboLabelSize` |
+
+---
+
+## Overlay lifecycle
+
+| Method | Called by | Action |
+| ------ | --------- | ------ |
+| `OnAttempt()` | `MistakesResetPatch` | `ShowEmpty()` only — `scrMistakesManager.Reset` fires during `scrController.Awake` (init) and `scnEditor.SwitchToEditMode`, not during in-game retries |
+| `OnLevelStart(isRestart)` | `ScnGamePlayPatch` / `PressToStartPatch` | `isRestart=true` → in-game retry → `_attempts++`; `isRestart=false && !inLevel && same key` → exit+re-enter → `_attempts++`; `isRestart=false && new key` → load from store. Then `inLevel = true`; `ShowEmpty()`; sets `attemptsValue.text`; `ShowOrHideElements()` |
+| `OnLevelEnd()` | Various patches (wipe, load, ESC) | `inLevel = false` — does **not** reset `_attempts` or `_currentLevelKey` |
+| `OnSceneUnloaded()` | `SceneManager.sceneUnloaded` | `inLevel = false`; `RDC.noHud = false`; `_levelNameOrigPos = null` |
+| `ShowEmpty()` | After each attempt | Resets displayed values to `--` / `0`; attempts color stays white |
+| `UpdateDisplay(acc, xacc, margin)` | `AddHitPatch` (every tile hit) | Updates acc/xacc colors; combo logic; judgement counts |
+| `ApplySettings(settings)` | Settings change callback | Re-applies all positions, scales, active states |
+| `ShowOrHideElements()` | Scene change / settings change | Toggles game-native UI visibility (noFail, difficulty, autoplay, song title, error meter) |
+| `ApplyLevelNameTransform()` | `ShowOrHideElements()` + `LevelNameTextRestorePatch` | Applies `LevelNameScale` and additive `LevelNameY` offset to `txtLevelName.rectTransform` |
+
+### Canvas show condition (checked every `Update`)
+
+``` txt
+paused           = scrController.instance?.paused ?? false
+showOverlayStats = ShowOverlay && (any stat row flag is true)
+canvas.active    = inLevel && !paused && !HideAllUI && (showOverlayStats || ShowComboDisplay)
+```
+
+### `ApplySettings` row visibility
+
+``` docs
+overlayRow.SetActive(ShowOverlay && ShowXxx)   — all stat rows gated on both flags
+attemptsRow.SetActive(ShowOverlay && ShowAttempts)
+comboDisplayContainer.SetActive(ShowComboDisplay)   — no ShowOverlay gate
+```
+
+---
+
+## Combo logic (`UpdateDisplay`)
+
+``` pseudo
+if margin == Perfect  OR  (margin == Auto AND ComboCountAuto):
+    _combo++
+    _comboPulseT = 1.0   → triggers pulse animation
+else if margin != Auto:
+    _combo = 0           → non-auto non-perfect breaks combo
+// Auto + ComboCountAuto=false: no change (neither increments nor breaks)
+```
+
+**Pulse animation** (`Update`): each frame while `_comboPulseT > 0`:
+
+``` cs
+_comboPulseT -= deltaTime / ComboPulseDuration
+_comboLabelWrapper.anchoredPosition.y = ComboLabelY + ComboPulseOffsetY × _comboPulseT
+comboDisplayValue.rectTransform.localScale = Vector3.one × (1 + ComboPulseScale × _comboPulseT)
+```
+
+Label wrapper drifts up and back; count text scales up and back. Container scale stays fixed.
+
+**Combo gradient**: `t = Clamp01(combo / ComboGradientMax)` → applied to `comboDisplayValue.color`.
+
+---
+
+## KeyViewer rendering (`KeyViewer/*`)
+
+Two independent UGUI panels parented to a single screen-space-overlay canvas (`sortingOrder = 100`). `BuildLayout` calls `BuildPresetPanel` for the hand and foot presets with distinct `sortBase` values (`100` and `1000`) so their sub-canvases never collide.
+
+### Per-row layers
+
+Each panel owns:
+
+- **One shared shadow layer** (`Canvas, sortingOrder = sortBase`) — every rain column's shadow Graphics for that panel render in here. Lower than any rain layer in that panel, so column B's rain always draws on top of column A's shadow.
+- **One rain layer per row** (`Canvas, sortingOrder = sortBase + 10 + rowIndex`) — the row's per-key rain body + tip Graphics.
+
+`_rainLayers` / `_shadowLayers` map global row index → layer `RectTransform`. The top row defines rain X positions; lower rows remap their rain X into the top row's column slots (left-aligned to midpoint, right-aligned to midpoint, see `BuildPresetPanel`).
+
+### Rain column lifecycle
+
+On key down, `StartRainColumn` creates body + tip Graphics (and shadow body + shadow tip Graphics if `RainShadowSize > 0`), pushes a `RainColumn` into `_rainColumns`. `Update` advances each column:
+
+- **Growing** (`Growing = true`, set until key up) — `Height` grows at `RainSpeed * dt`; `BotY` stays at 0.
+- **Dying** — `Growing = false`; `BotY` grows at `RainSpeed * dt`. When `BotY >= RainTrackLength`, all Graphics are destroyed and the column removed.
+
+Per frame, the rain body covers `[BotY, min(BotY+Height, fadeStart)]` (sharp opaque rectangle). The rain tip covers `[max(BotY, fadeStart), min(BotY+Height, fadeEnd)]` with `uvRect.y = (tipBot - fadeStart) / fadeZoneH` sampling the 2-row gradient texture (`GetGradientTex`).
+
+### Shadow sprites + textures
+
+| Cache | Builder | Purpose |
+| ----- | ------- | ------- |
+| `_shadowBodySprites[shadowSize]` | `GetShadowBodySprite` (`softTop: false`) | 9-slice body sprite, fade on L/B/R, sharp top. Used while a rain tip exists above the body so the body meets the tip seamlessly at `fadeStart` |
+| `_shadowBodySpritesSoftTop[shadowSize]` | `GetShadowBodySpriteSoftTop` (`softTop: true`) | All-sides fade variant. Used while the body's top _is_ the rain top (growing, `BotY+Height ≤ fadeStart`) so the shadow gets a soft halo above the rain |
+| `_shadowTipTextures[(shadowSize << 16) \| rainWidth]` | `GetShadowTipTex(shadowSize, rainWidth)` | 2-row texture, baked at the actual rect width so the side blur stays exactly `shadowSize` px (RawImage has no 9-slice; stretching would distort blur fraction). Bottom row = horizontal-blur opaque, top row = transparent. `Rain.Update` sets `uvRect` to match the rain tip's fade |
+| `_gradTex` | `GetGradientTex` | 1×2 RGBA texture: white opaque → white transparent. Used by the rain tip (not shadow tip — that has horizontal blur baked in) |
+| `_allSprites` / `_allTextures` | — | Tracked for cleanup on `ClearLayout` |
+
+The shadow body's rect height is `bodyH + ShadowSize` (with sharp-top) or `bodyH + 2*ShadowSize` (with soft-top, extending fade above the rain). Its bottom Y is `panelTop + BotY - ShadowSize`. When `BotY > fadeStart`, an alpha multiplier `Mathf.Clamp01(1 - (BotY - fadeStart) / fadeZoneH)` is applied to the shadow body color so the trailing extension fades out with the rain instead of hanging in mid-air.
+
+### Cell + count state
+
+| Field | Purpose |
+| ----- | ------- |
+| `_keyCells[KeyCode]` | `List<KeyCellRefs>` — every cell rendering this key (hand and foot presets can each own one). All entries get updated on key down/up |
+| `_kpsCells` / `_totalCells` | `List<StatCellRefs>` — stat cells track preset for color/font resolution. Each `Total` cell sums only its own preset's counts |
+| `_counts[presetName][KeyCode]` | Per-preset, per-key total. Persisted to `keycounts.txt` if any active preset has `PersistCounts = true`. File format: tab-separated `presetName\tKeyCode\tcount` per line |
+| `_lastTotalPerPreset[presetName]` | Cached last-written `Total` value per preset, drives the dirty check that avoids re-writing the text every keydown |
+| `_hitTimes` | `Queue<float>` — `realtimeSinceStartup` of recent hits; KPS = count where `now - peek <= 1s` |
+| `_rainEnabled` | `HashSet<KeyCode>` — keys whose row has `ShowRain = true` (plus any ghost keys). Populated during `BuildPresetPanel` |
+| `_rainColors` | Per-key custom rain color. Missing → falls back to `Color.white` |
+| `_ghostKeys` | `HashSet<KeyCode>` — keys flagged as ghost. Rain still spawns; `_hitTimes` / `_counts` / `_totalCells` are skipped on press |
+
+---
+
+## HarmonyX patches (`Patches.cs`)
+
+| Patch target | Timing | Action |
+| ------------ | ------ | ------ |
+| `scrMistakesManager.Reset` | Postfix | `OnAttempt()` |
+| `scrMistakesManager.AddHit(HitMargin)` | Postfix | `UpdateDisplay(percentAcc, percentXAcc, hit)` |
+| `scnGame.Play(seqID, isRestart)` | Postfix | `OnLevelStart(isRestart)` — custom levels; `isRestart` param distinguishes retry from first load |
+| `scrPressToStart.ShowText` | Postfix | `OnLevelStart(false)` — official levels (always a fresh entry from this hook) |
+| `scrController.StartLoadingScene` | Postfix | `OnLevelEnd()` |
+| `scrUIController.WipeToBlack` | Postfix | `OnLevelEnd()` |
+| `StateBehaviour.ChangeState(States.None)` | Postfix | `OnLevelEnd()` |
+| `scnEditor.ResetScene` | Postfix | `OnLevelEnd()` |
+| `scnEditor.SwitchToEditMode` | Postfix | `ShowOrHideElements()` |
+| `scrController.LevelNameTextRestore` | Postfix | `ApplyLevelNameTransform()` — re-applies our scale/offset after the game restores canonical position |
+| `scrShowIfDebug.Update` | Pre+Post | Temporarily sets `RDC.auto = false` (if `HideAutoplayText \|\| HideAllUI`) to suppress the autoplay text |
+| `scrHitTextMesh.Show` | Prefix | Moves judgement popup off-screen (`HideAllUI`) or suppresses it (`HidePerfectJudgements`) |
+| `scrHitText.Show(Vector3, float)` | Prefix | Moves legacy judgement text off-screen (`HideAllUI`) |
+| `scrMissIndicator.Awake` | Postfix | Moves miss indicator off-screen (`HideAllUI`) |
+| `scrPlanet.MoveToNextFloor` | Postfix | Hides error meter (`HideAllUI` or `HideHitmeter`) |
+| `scrController.paused` (setter) | Postfix | Hides error meter (`HideAllUI` or `HideHitmeter`) |
+| `OttoButtonController.Update` | Postfix | Hides Otto debug button (`HideAllUI`) |
+| `RDInput.GetMain(int)` | Postfix | Key Limiter — clamps press count to allowed-key count when state=Down |
+| `scrMistakesManager.AddHit(HitMargin)` | Prefix | Key Limiter — suppresses hit if no allowed key currently held |
+
+### Optimizations (`Optimizations.cs`)
+
+Independent file with Harmony patches gated on `Opt*` settings: `scrConductor.Update` (spectrum throttle), `TextureManager.LoadTexture` / `CustomTexture.GetTexture` / `CustomSprite.GetSprite` (non-readable / DXT), `scrPlanet.Update` / `scrFloor.Update` (physics non-alloc / DOTween fix).
+
+---
+
+## SettingsGui patterns
+
+| Helper | Signature | Purpose |
+| ------ | --------- | ------- |
+| `W(px)` | `GUILayoutOption` | `GUILayout.Width(px × _uiScale)` |
+| `WMax(px)` | `GUILayoutOption` | `GUILayout.MaxWidth(px × _uiScale)` |
+| `Indent(action, space=20f)` | `void` | `BeginHorizontal → Space(space) → action() → EndHorizontal`. Captured locals can't be `ref` — set a local bool inside and copy out afterwards |
+| `SliderRow(label, out result, value, min, max, indent=20f, fmt="F2", suffix="")` | `void` | Thin shim that delegates to `SettingsInput.Slider`. Use the new API in fresh code |
+| `DeferredText(canonical, width, out committed)` | `bool` | Thin shim that delegates to `SettingsInput.DeferredText` |
+| `DrawGradientEditor(key, gradient, ref changed)` | `void` | Full gradient editor (solid toggle, perfect color, per-stop RGB) |
+| `DrawPositionButtons(current, out result)` | `bool` | L/R buttons for `OverlayPosition` (left button disabled when already Left, vice versa) |
+
+Sections nested inside the Overlay section use `indent=40f` in `SliderRow` to appear visually indented below their section headers (which are already at the overlay's 20px indent).
+
+`_uiScale = GUI.matrix.m00` is read at the start of every `Draw()` call.
+
+`_noWrapLabel` is a cached `GUIStyle` with `wordWrap = false`; initialized lazily and passed to every `GUILayout.Label` call to prevent wrapping at any scale.
+
+### SettingsInput (`Settings/SettingsInput.cs`)
+
+Shared input widgets owning per-frame counter + deferred-edit buffers + per-control undo baselines. Driven by the SettingsGui Draw loop:
+
+- `BeginFrame(uiScale, noWrapLabel)` — reset counter, refresh cached scale/style. Called at the start of every `SettingsGui.Draw`.
+- `ResetState()` — wipe edit buffers and undo baselines. Called whenever `_editingPreset` / `_editingIsFoot` changes (navigation between main menu / hand presets / foot presets) so stale state doesn't carry across views.
+- `Slider(label, ref float value, min, max, indent, fmt, suffix, step=0)` — renders label + editable text + slider + inline undo button (`↶`). Returns `true` if `value` changed.
+- `Slider(label, ref int value, …)` — int overload that snaps to `step=1`.
+- `DeferredText(canonical, width, out committed)` — text field whose edits stay buffered (and visible) while focused; commits only on focus loss or Enter. Used by every hex color input.
+
+Control IDs are `"ctrl" + N` where `N` is a per-frame counter. As long as the UI tree doesn't reorder mid-edit, IDs stay stable across frames and undo/buffer state survives. Slider step is applied both to slider drags and text commits.
+
+### Auto-rebuild of the key viewer
+
+`_needsKvRebuild` is a static flag set anywhere a _structural_ edit in the preset edit page happens — key width, border radius, gap, row keys text, row height, special-key insert buttons, show-rain toggle, rain-color custom/reset, add/remove row. After `DrawKvPreset` returns, the Draw loop fires `onKeyViewerRebuild` once if the flag is set, then clears it. Non-structural edits (X/Y/Scale, colors, rain animation params) route through `onChanged → ApplySettings` only, so dragging RGB sliders doesn't trigger a full layout rebuild.
+
+### SettingsGui section order
+
+Overlay (Scale → Progress → Accuracy / X-Accuracy → BPM / Tile BPM → Attempts → Timing Scale → Judgements) → Combo Display → Hide UI → Tweaks → Key Limiter → Chatter Blocker → Key Viewer (Hand list + Foot list, each with Enabled toggle and Edit/Delete/Add) → Optimizations → Font → Misc.
+
+The **Misc** section displays read-only stats — currently just "RAM savings (last scene load): ±X.XX MB", populated from `MainClass.LastUnloadSavingsBytes` (set asynchronously when `Resources.UnloadUnusedAssets()` completes in `OnSceneUnloaded`, measured via `Profiler.GetTotalAllocatedMemoryLong()`). Shows `----MB` until the first unload completes.
+
+### Preset edit view
+
+`_editingPreset >= 0` short-circuits the normal `Draw` and renders only the preset editor for `(_editingIsFoot ? KvFootPresets : KvHandPresets)[_editingPreset]`. Sections inside: Name, Reset Counters button, Main Settings (Key Width, Border Radius, Gap, X, Y, Scale, Persist Counts), Edit Rows (per-row collapsible block: cell grid + Listen toggle, Height, Show Rain, Rain Color editor, `× Delete Row` button at the bottom), Key Rain (Track Length, Fade Start, Speed, Width Step, Shadow Size, Shadow Color), **Ghost Keys** (hand only — toggle + per-slot button grid + Ghost Rain Color editor), Background / Label Text (`Visible` toggle, colors, font size) / Count Text (same shape) color editors. No Apply button — rebuild is automatic via `_needsKvRebuild`.
+
+**Cell grid widget** (`DrawCellGrid`): each cell renders as a clickable button (`▼` prefix when expanded). Selecting a cell opens an inline panel with reorder (`◀ ▶`), Delete, **Change Key** (rebinds this cell to a different key via the shared `ListenForKey()` capture; shows "Listening…" while active; hidden for KPS / Total tokens), Label override (text), and a Width slider that mirrors the symmetric cell. A `● Listen` / `■ Stop` toggle button leading the row puts the row into key-capture mode — pressing a not-yet-registered key adds it as a new cell, pressing an already-registered key removes its cell. `+ KPS` / `+ Total` insert the corresponding special tokens. Captured by `ListenForKey()` which combines `Event.KeyDown` with an explicit `Input.GetKeyDown` poll for modifier keys (macOS doesn't surface modifier-only presses as IMGUI key events).
+
+**Per-row collapse**: `_kvRowOpen[idx]` (parallel to `_kvRowRainOpen[idx]`) gates everything below the row header. Collapsed rows show only the `► Row N` toggle. New rows default to open.
+
+The Key Limiter section reuses the same grid + Listen widget against `Settings.KeyLimiterCustomKeys` (serialized as a space-joined token string; no per-cell label/width).
+
+### Hide UI conditional rendering
+
+All Hide UI sub-options (everything except Hide All) are only rendered when `HideAllUI` is `false`. When `HideAllUI` is on there is no point toggling them individually.
+
+---
+
+## AttemptsStore (`AttemptsStore.cs`)
+
+Static class that persists per-level attempt counts across sessions.
+
+**File:** `<ModPath>/BismuthAttempts.txt` — one `key=value` line per level. Sits alongside the other Bismuth-owned files in the mod folder.
+
+**Key format:** Computed by `GetLevelKey()` in `Overlay.cs`:
+
+- **Official levels** — `scrController.instance.levelName` (= `GCS.internalLevelName`, e.g. `"1-1"`)
+- **Custom levels** — `scnGame.instance.levelPath` (the `.adofai` file path, set by `LoadAndPlayLevel` before `scnGame.Play` fires)
+
+`scrController.levelName` is NOT used for custom levels — it falls back to the Unity scene name `"scnGame"` when `GCS.internalLevelName` is null, making all custom levels share one key. `GCS.customLevelPaths[0]` is null at the time `scnGame.Play` fires.
+
+### In-game retry flow (custom levels)
+
+Discovered via IL inspection of `scrController.ResetCustomLevel`:
+
+```txt
+scrController.ResetCustomLevel(isRestart)  [coroutine]
+  → scrUIController.WipeToBlack()          → our patch: OnLevelEnd() → inLevel = false
+  → (yield until wipe completes)
+  → scnGame.ResetScene()                   — resets scene in-place, no Unity scene unload
+  → scnGame.Play(checkpointNum, isRestart=true)  → our patch: OnLevelStart(isRestart=true)
+```
+
+`scrMistakesManager.Reset` fires only in `scrController.Awake` and `scnEditor.SwitchToEditMode` — **not** during in-game retries when the scene doesn't reload. So `OnAttempt()` cannot be used to detect retries; the `isRestart` parameter on `scnGame.Play` is the reliable signal.
+
+| Method | Returns | Purpose |
+| ------ | ------- | ------- |
+| `Get(key)` | `int` | Returns stored count for key, or 0 if not found |
+| `Set(key, value)` | `void` | Stores count and immediately writes the file |
+| `ClearAll()` | `void` | Empties all stored counts and overwrites the file |
+
+Loads lazily on first call. `Get`/`Set` are no-ops when `key` is null (handles the between-scenes window).
+
+---
+
+## BismuthLog (`BismuthLog.cs`)
+
+Static session logger writing to `<ModPath>/BismuthLog.txt`.
+
+Lives in the mod folder (`MainClass.ModPath`), so all Bismuth-owned persistent data sits in one directory. On macOS that is typically `…/Steam/steamapps/common/A Dance of Fire and Ice/Mods/Bismuth/BismuthLog.txt`.
+
+| Method | Purpose |
+| ------ | ------- |
+| `Init()` | Called by `MainClass.StartMod` — clears the file and writes a timestamped session header |
+| `Log(message)` | Appends `[HH:mm:ss] message\n`; no-op if `Init` failed; swallows IO exceptions |
+
+Use `BismuthLog.Log(...)` for any Bismuth-specific diagnostic output. The UMM log (`modEntry.Logger`) is still used by `FontLoader` for font load results.

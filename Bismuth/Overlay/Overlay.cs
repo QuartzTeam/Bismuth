@@ -1,0 +1,187 @@
+using UnityEngine;
+using UnityEngine.SceneManagement;
+using UnityEngine.UI;
+
+namespace Bismuth
+{
+    // Overlay is split into partial files by responsibility:
+    //   Overlay.cs        (this) — class shell, state, lifecycle (Awake/OnDestroy/scene hooks), helpers
+    //   Overlay.Build.cs  — UGUI tree construction (canvas, containers, rows, combo, FPS, judgements)
+    //   Overlay.Update.cs — per-frame Update + UpdateDisplay
+    //   Overlay.Game.cs   — game-event handlers (OnAttempt, OnLevelStart, OnLevelEnd, ShowEmpty, SetFont, ResetAttempts)
+    //   Overlay.Apply.cs  — ApplySettings, PlaceRows/Attach, ShowOrHideElements, ApplyLevelNameTransform
+    public partial class Overlay : MonoBehaviour
+    {
+        public static Overlay Instance { get; private set; }
+        public bool InLevel => inLevel;
+
+        private Canvas canvas;
+        private Transform leftContainer;
+        private Transform rightContainer;
+        private RectTransform timingScaleContainer;
+        private RectTransform judgementsContainer;
+        private RectTransform attemptsContainer;
+
+        private int _attempts;
+        private string _currentLevelKey;
+        private int _combo;
+        private float _comboPulseT;
+        // Per-attempt hit counts (one slot per HitMargin). We track internally because the
+        // game's tracker.hitMarginsCount can carry stale checkpoint state into a fresh attempt.
+        private readonly int[] _judgementCounts = new int[12];
+
+        private GameObject progressRow;
+        private Text progressLabel;
+        private Text progressValue;
+        private GameObject attemptsRow;
+        private Text attemptsLabel;
+        private Text attemptsValue;
+        private GameObject accRow;
+        private Text accLabel;
+        private Text accValue;
+        private GameObject xaccRow;
+        private Text xaccLabel;
+        private Text xaccValue;
+        private GameObject bpmRow;
+        private Text bpmLabel;
+        private Text bpmValue;
+        private GameObject tileBpmRow;
+        private Text tileBpmLabel;
+        private Text tileBpmValue;
+        private GameObject timingScaleRow;
+        private Text timingScaleLabel;
+        private Text timingScaleValue;
+        private GameObject judgementsRow;
+        private Text[] judgementTexts;
+        private RectTransform comboDisplayContainer;
+        private RectTransform _comboLabelWrapper;
+        private Text comboDisplayLabel;
+        private Text comboDisplayValue;
+        private Shadow _comboValueShadow;
+        private GameObject fpsContainer;
+        private Text fpsText;
+
+        private float _fpsAccum;
+        private int _fpsFrames;
+        private const float FpsInterval = 0.2f;
+
+        private const int ComboLabelBaseFontSize = 24;
+
+        private static readonly HitMargin[] DisplayedMargins =
+        {
+            HitMargin.FailOverload,
+            HitMargin.TooEarly, HitMargin.VeryEarly, HitMargin.EarlyPerfect,
+            HitMargin.Perfect,
+            HitMargin.LatePerfect, HitMargin.VeryLate, HitMargin.TooLate,
+            HitMargin.FailMiss,
+        };
+
+        private bool inLevel;
+        private float _lastTileBpmTime = -1f;
+        private float _lastTileBpm;
+        private Vector2? _levelNameOrigPos;
+
+        // Cached values to avoid per-frame string allocation when display hasn't changed.
+        private float _lastProgressT = -1f;
+        private float _lastBpm = -1f;
+        private float _lastTileBpmVal = -1f;
+        private float _lastTimingScale = -1f;
+        private int _lastComboDisplay = -1;
+        private int _lastPrecision = -1;
+
+        public static Overlay Create()
+        {
+            var go = new GameObject("BismuthOverlay");
+            DontDestroyOnLoad(go);
+            return go.AddComponent<Overlay>();
+        }
+
+        private void Awake()
+        {
+            Instance = this;
+            BuildUI();
+            SceneManager.sceneUnloaded += OnSceneUnloaded;
+            SceneManager.activeSceneChanged += OnActiveSceneChanged;
+        }
+
+        private void OnDestroy()
+        {
+            SceneManager.sceneUnloaded -= OnSceneUnloaded;
+            SceneManager.activeSceneChanged -= OnActiveSceneChanged;
+            if (Instance == this) Instance = null;
+        }
+
+        private void OnSceneUnloaded(Scene _)
+        {
+            inLevel = false;
+            RDC.noHud = false;
+            _levelNameOrigPos = null;
+        }
+
+        private void OnActiveSceneChanged(Scene _, Scene __)
+        {
+            ShowOrHideElements();
+        }
+
+        private static string GetLevelKey()
+        {
+            var controller = scrController.instance;
+            if (controller == null) return null;
+            string name = controller.levelName;
+            // Official levels: levelName = GCS.internalLevelName (e.g. "1-1").
+            // Custom levels: levelName falls back to "scnGame"; use scnGame.levelPath instead.
+            if (string.IsNullOrEmpty(name) || name == "scnGame")
+            {
+                string path = scnGame.instance?.levelPath;
+                return string.IsNullOrEmpty(path) ? null : path;
+            }
+            return name;
+        }
+
+        private static Color MarginColor(HitMargin m)
+        {
+            // RDConstants.data is a lazy getter that can NRE inside during startup.
+            RDConstants data;
+            try { data = RDConstants.data; }
+            catch { return Color.white; }
+            if (data == null) return Color.white;
+            var c = data.hitMarginColoursUI;
+            if (c == null) return Color.white;
+            switch (m)
+            {
+                case HitMargin.TooEarly:     return c.colourTooEarly;
+                case HitMargin.VeryEarly:    return c.colourVeryEarly;
+                case HitMargin.EarlyPerfect: return c.colourLittleEarly;
+                case HitMargin.Perfect:      return c.colourPerfect;
+                case HitMargin.LatePerfect:  return c.colourLittleLate;
+                case HitMargin.VeryLate:     return c.colourVeryLate;
+                case HitMargin.TooLate:      return c.colourTooLate;
+                case HitMargin.Multipress:   return c.colourMultipress;
+                default:                     return c.colourFail;
+            }
+        }
+
+        private static string TrimZeros(string s)
+        {
+            int dot = s.IndexOf('.');
+            if (dot < 0) return s;
+            s = s.TrimEnd('0');
+            return s[s.Length - 1] == '.' ? s.Substring(0, s.Length - 1) : s;
+        }
+
+        private static void ConfigureScaler(CanvasScaler scaler)
+        {
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920f, 1080f);
+            scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
+            scaler.matchWidthOrHeight = 0.5f;
+        }
+
+        private static void AddShadow(GameObject go)
+        {
+            var shadow = go.AddComponent<Shadow>();
+            shadow.effectColor = new Color(0f, 0f, 0f, 0.75f);
+            shadow.effectDistance = new Vector2(2f, -2f);
+        }
+    }
+}
