@@ -113,28 +113,5 @@ namespace Bismuth
             return tex;
         }
 
-        private static Sprite MakeRoundedSprite(int w, int h, int radius)
-        {
-            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false);
-            var pixels = new Color32[w * h];
-            float r = radius - 0.5f;
-            for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++)
-            {
-                int cx = Mathf.Min(x, w - 1 - x);
-                int cy = Mathf.Min(y, h - 1 - y);
-                byte a = 255;
-                if (cx < radius && cy < radius)
-                {
-                    float dx = radius - cx - 1; float dy = radius - cy - 1;
-                    a = dx * dx + dy * dy <= r * r ? (byte)255 : (byte)0;
-                }
-                pixels[y * w + x] = new Color32(255, 255, 255, a);
-            }
-            tex.SetPixels32(pixels);
-            tex.Apply(false, false);
-            return Sprite.Create(tex, new Rect(0, 0, w, h), new Vector2(0.5f, 0.5f), 100f, 0u,
-                SpriteMeshType.FullRect, new Vector4(radius, radius, radius, radius));
-        }
     }
 }

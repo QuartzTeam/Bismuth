@@ -11,6 +11,13 @@ namespace Bismuth
             GUILayout.BeginHorizontal();
             if (GUILayout.Button((_keyViewerOpen ? "▼" : "►") + " Key Viewer", GUILayout.ExpandWidth(false)))
                 _keyViewerOpen = !_keyViewerOpen;
+            bool kvEnabled = GUILayout.Toggle(settings.ShowKeyViewer, " Enabled");
+            if (kvEnabled != settings.ShowKeyViewer)
+            {
+                settings.ShowKeyViewer = kvEnabled;
+                changed = true;
+                onRebuild?.Invoke();
+            }
             GUILayout.EndHorizontal();
 
             if (!_keyViewerOpen) return;
@@ -131,10 +138,6 @@ namespace Bismuth
                 float newKW = Mathf.Round(kvKW);
                 if (newKW != preset.KeyWidth) { preset.KeyWidth = newKW; changed = true; _needsKvRebuild = true; }
 
-                SliderRow("Border Radius", out float kvRadius, preset.Radius, 0f, 32f, 40f, "F0");
-                int newRadius = Mathf.RoundToInt(kvRadius);
-                if (newRadius != preset.Radius) { preset.Radius = newRadius; changed = true; _needsKvRebuild = true; }
-
                 SliderRow("Gap", out float kvGap, preset.Gap, 0f, 20f, 40f, "F1", "px");
                 float newGap = Mathf.Round(kvGap * 2f) * 0.5f;
                 if (newGap != preset.Gap) { preset.Gap = newGap; changed = true; _needsKvRebuild = true; }
@@ -186,6 +189,33 @@ namespace Bismuth
                 DrawKvColorEditor("Released Color", preset.BgIdle, ref _kvBgIdleOpen, ref changed);
                 GUILayout.Space(4f);
                 DrawKvColorEditor("Pressed Color",  preset.BgHeld, ref _kvBgHeldOpen, ref changed);
+                GUILayout.Space(4f);
+                GUILayout.EndVertical();
+                GUILayout.EndHorizontal();
+            }
+
+            GUILayout.Space(4f);
+            Indent(() =>
+            {
+                if (GUILayout.Button((_kvBorderOpen ? "▼" : "►") + " Border", GUILayout.ExpandWidth(false)))
+                    _kvBorderOpen = !_kvBorderOpen;
+            });
+            if (_kvBorderOpen)
+            {
+                SliderRow("Radius", out float kvRadius, preset.Radius, 0f, 64f, 40f, "F0", "px");
+                int newRadius = Mathf.RoundToInt(kvRadius);
+                if (newRadius != preset.Radius) { preset.Radius = newRadius; changed = true; _needsKvRebuild = true; }
+
+                SliderRow("Width", out float kvBw, preset.BorderWidth, 0f, 16f, 40f, "F1", "px");
+                float newBw = Mathf.Round(kvBw * 2f) * 0.5f;
+                if (newBw != preset.BorderWidth) { preset.BorderWidth = newBw; changed = true; _needsKvRebuild = true; }
+
+                GUILayout.BeginHorizontal();
+                GUILayout.Space(20f);
+                GUILayout.BeginVertical();
+                DrawKvColorEditor("Released Color", preset.BorderIdle, ref _kvBorderIdleOpen, ref changed);
+                GUILayout.Space(4f);
+                DrawKvColorEditor("Pressed Color",  preset.BorderHeld, ref _kvBorderHeldOpen, ref changed);
                 GUILayout.Space(4f);
                 GUILayout.EndVertical();
                 GUILayout.EndHorizontal();

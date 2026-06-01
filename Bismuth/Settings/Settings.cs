@@ -39,6 +39,9 @@ namespace Bismuth
         public List<KeyViewerRow> Rows  = null;
         public float  KeyWidth          = 60f;
         public int    Radius            = 8;
+        public float  BorderWidth       = 0f;
+        public KvColor BorderIdle       = null;
+        public KvColor BorderHeld       = null;
         public float  Gap               = 4f;
         public float  X                 = 0.01f;
         public float  Y                 = 0.01f;
@@ -75,6 +78,8 @@ namespace Bismuth
             if (CountIdle == null) CountIdle = new KvColor { R = 0.7f, G = 0.7f, B = 0.7f, A = 1f };
             if (CountHeld == null) CountHeld = new KvColor { R = 0f,   G = 0f,   B = 0f,   A = 1f };
             if (RainShadowColor == null) RainShadowColor = new KvColor { R = 0f, G = 0f, B = 0f, A = 0.05f };
+            if (BorderIdle      == null) BorderIdle      = new KvColor { R = 1f, G = 1f, B = 1f, A = 1f };
+            if (BorderHeld      == null) BorderHeld      = new KvColor { R = 1f, G = 1f, B = 1f, A = 1f };
             if (Rows != null) foreach (var r in Rows) r?.EnsureDefaults();
         }
     }
@@ -107,6 +112,7 @@ namespace Bismuth
         public List<KeyViewerPreset> KvFootPresets = null;
         public int  KvActiveHand   = 0;
         public int  KvActiveFoot   = 0;
+        public bool ShowKeyViewer  = true;
         public bool ShowHandViewer = true;
         public bool ShowFootViewer = false;
 

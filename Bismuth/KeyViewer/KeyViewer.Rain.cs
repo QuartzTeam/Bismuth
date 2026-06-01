@@ -33,7 +33,7 @@ namespace Bismuth
                             if (!_counts.TryGetValue(pn, out var pc)) _counts[pn] = pc = new Dictionary<KeyCode, int>();
                             pc.TryGetValue(key, out int prev);
                             pc[key] = prev + 1;
-                            if (c.Bg    != null) c.Bg.color    = c.Preset.BgHeld.ToColor();
+                            if (c.Bg    != null) { c.Bg.color = c.Preset.BgHeld.ToColor(); c.Bg.BorderColor = c.Preset.BorderHeld.ToColor(); }
                             if (c.Name  != null) c.Name.color  = c.Preset.TxtHeld.ToColor();
                             if (c.Count != null) { c.Count.text = pc[key].ToString(); c.Count.color = c.Preset.CountHeld.ToColor(); }
                         }
@@ -69,7 +69,7 @@ namespace Bismuth
                         foreach (var c in cells)
                         {
                             if (c?.Preset == null) continue;
-                            if (c.Bg    != null) c.Bg.color    = c.Preset.BgIdle.ToColor();
+                            if (c.Bg    != null) { c.Bg.color = c.Preset.BgIdle.ToColor(); c.Bg.BorderColor = c.Preset.BorderIdle.ToColor(); }
                             if (c.Name  != null) c.Name.color  = c.Preset.TxtIdle.ToColor();
                             if (c.Count != null) c.Count.color = c.Preset.CountIdle.ToColor();
                         }

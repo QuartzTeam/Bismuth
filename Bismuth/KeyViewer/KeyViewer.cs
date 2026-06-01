@@ -30,7 +30,7 @@ namespace Bismuth
 
         private class KeyCellRefs
         {
-            public Image Bg;
+            public RoundedRectGraphic Bg;
             public Text  Name;
             public Text  Count;
             public KeyViewerPreset Preset;
@@ -38,7 +38,7 @@ namespace Bismuth
 
         private class StatCellRefs
         {
-            public Image Bg;
+            public RoundedRectGraphic Bg;
             public Text  Name;
             public Text  Value;
             public KeyViewerPreset Preset;
@@ -103,7 +103,7 @@ namespace Bismuth
         private readonly Dictionary<string, int> _lastTotalPerPreset = new Dictionary<string, int>();
 
         private static bool AnyViewerOn(Settings s) =>
-            !s.HideAllUI &&
+            !s.HideAllUI && s.ShowKeyViewer &&
             ((s.ShowHandViewer && s.Hand != null) || (s.ShowFootViewer && s.Foot != null));
 
         private static bool NeedsPersist(Settings s) =>
@@ -151,7 +151,7 @@ namespace Bismuth
                 foreach (var c in kvp.Value)
                 {
                     if (c?.Preset == null) continue;
-                    if (c.Bg    != null) c.Bg.color    = c.Preset.BgIdle.ToColor();
+                    if (c.Bg    != null) { c.Bg.color = c.Preset.BgIdle.ToColor(); c.Bg.BorderColor = c.Preset.BorderIdle.ToColor(); }
                     if (c.Name  != null) { c.Name.color  = c.Preset.TxtIdle.ToColor();   c.Name.fontSize  = c.Preset.LabelSize; }
                     if (c.Count != null) { c.Count.color = c.Preset.CountIdle.ToColor(); c.Count.fontSize = c.Preset.CountSize; }
                 }
@@ -164,7 +164,7 @@ namespace Bismuth
             foreach (var s in cells)
             {
                 if (s?.Preset == null) continue;
-                if (s.Bg    != null) s.Bg.color    = s.Preset.BgIdle.ToColor();
+                if (s.Bg    != null) { s.Bg.color = s.Preset.BgIdle.ToColor(); s.Bg.BorderColor = s.Preset.BorderIdle.ToColor(); }
                 if (s.Name  != null) { s.Name.color  = s.Preset.TxtIdle.ToColor();   s.Name.fontSize  = s.Preset.LabelSize; }
                 if (s.Value != null) { s.Value.color = s.Preset.CountIdle.ToColor(); s.Value.fontSize = s.Preset.CountSize; }
             }
@@ -258,13 +258,17 @@ namespace Bismuth
             _canvas = canvasGo.AddComponent<Canvas>();
             _canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             _canvas.sortingOrder = 100;
-            var scaler = canvasGo.AddComponent<CanvasScaler>();
+            ConfigureScaler(canvasGo.AddComponent<CanvasScaler>());
+            canvasGo.AddComponent<GraphicRaycaster>();
+            canvasGo.SetActive(AnyViewerOn(_settings));
+        }
+
+        private static void ConfigureScaler(CanvasScaler scaler)
+        {
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1920f, 1080f);
             scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
             scaler.matchWidthOrHeight = 0.5f;
-            canvasGo.AddComponent<GraphicRaycaster>();
-            canvasGo.SetActive(AnyViewerOn(_settings));
         }
 
         private void ClearLayout()

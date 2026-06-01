@@ -40,6 +40,9 @@ namespace Bismuth
         private static bool _editingIsFoot   = false;
         private static bool _kvBgIdleOpen = false;
         private static bool _kvBgHeldOpen = false;
+        private static bool _kvBorderOpen      = false;
+        private static bool _kvBorderIdleOpen  = false;
+        private static bool _kvBorderHeldOpen  = false;
         private static bool _kvTxtIdleOpen = false;
         private static bool _kvTxtHeldOpen   = false;
         private static bool _kvCountIdleOpen = false;
