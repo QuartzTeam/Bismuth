@@ -33,6 +33,13 @@ namespace Bismuth
         private static bool _bpmColorOpen = false;
         private static bool _attemptsOpen = false;
         private static bool _comboColorOpen = false;
+        private static bool _comboLabelOpen = false;
+        private static bool _comboCountOpen = false;
+        private static bool _comboAnimationsOpen = false;
+        private static bool _comboLabelShadowOpen = false;
+        private static bool _comboLabelShadowColorOpen = false;
+        private static bool _comboCountShadowOpen = false;
+        private static bool _comboCountShadowColorOpen = false;
         private static bool _keyViewerOpen   = false;
         private static bool _keyLimiterOpen  = false;
         private static bool _chatterBlockerOpen = false;
@@ -40,6 +47,9 @@ namespace Bismuth
         private static bool _editingIsFoot   = false;
         private static bool _kvBgIdleOpen = false;
         private static bool _kvBgHeldOpen = false;
+        private static bool _kvBorderOpen      = false;
+        private static bool _kvBorderIdleOpen  = false;
+        private static bool _kvBorderHeldOpen  = false;
         private static bool _kvTxtIdleOpen = false;
         private static bool _kvTxtHeldOpen   = false;
         private static bool _kvCountIdleOpen = false;

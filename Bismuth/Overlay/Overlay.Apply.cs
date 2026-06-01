@@ -23,28 +23,72 @@ namespace Bismuth
             {
                 comboDisplayContainer.gameObject.SetActive(settings.ShowComboDisplay);
                 comboDisplayContainer.anchoredPosition = new Vector2(0f, settings.ComboDisplayY);
-                comboDisplayContainer.localScale = Vector3.one * settings.ComboDisplaySize;
+                // ComboDisplaySize fans out into the text fontSize fields below instead of
+                // localScale so the texts re-rasterize at the chosen size — scaling the
+                // container would stretch the rasterized texture and blur the glyphs.
+                comboDisplayContainer.localScale = Vector3.one;
                 if (_comboLabelWrapper != null)
-                    _comboLabelWrapper.anchoredPosition = new Vector2(0f, settings.ComboLabelY);
+                    _comboLabelWrapper.anchoredPosition = new Vector2(0f, settings.ComboLabelY * settings.ComboDisplaySize);
             }
             if (comboDisplayLabel != null)
             {
                 comboDisplayLabel.text = settings.ComboDisplayText;
-                comboDisplayLabel.fontSize = Mathf.RoundToInt(ComboLabelBaseFontSize * settings.ComboLabelSize);
+                comboDisplayLabel.fontSize = Mathf.RoundToInt(ComboLabelBaseFontSize * settings.ComboLabelSize * settings.ComboDisplaySize);
             }
-            float sh = settings.ComboShadowSize;
-            if (_comboValueShadow != null) _comboValueShadow.effectDistance = new Vector2(sh, -sh);
+            if (comboDisplayValue != null)
+            {
+                comboDisplayValue.fontSize = Mathf.RoundToInt(ComboValueBaseFontSize * settings.ComboDisplaySize * settings.ComboCountSize);
+                // Defend against leftover transient pulse scale from the old localScale-based path.
+                comboDisplayValue.rectTransform.localScale = Vector3.one;
+            }
+            // Combo shadows — count and label each have their own offset + color. Both scale
+            // with ComboDisplaySize so the drop offset tracks the fontSize-driven text size;
+            // the label additionally scales by ComboLabelSize since its fontSize does too.
+            var defaultShColor = new Color(0f, 0f, 0f, 0.5f);
+            if (_comboValueShadow != null)
+            {
+                _comboValueShadow.effectColor    = settings.ComboShadowColor?.ToColor() ?? defaultShColor;
+                float countShadowScale = settings.ComboDisplaySize * settings.ComboCountSize;
+                _comboValueShadow.effectDistance = new Vector2(
+                    settings.ComboShadowOffsetX * countShadowScale,
+                    settings.ComboShadowOffsetY * countShadowScale);
+            }
+            if (_comboLabelShadow != null)
+            {
+                _comboLabelShadow.effectColor    = settings.ComboLabelShadowColor?.ToColor() ?? defaultShColor;
+                float labelShadowScale = settings.ComboDisplaySize * settings.ComboLabelSize;
+                _comboLabelShadow.effectDistance = new Vector2(
+                    settings.ComboLabelShadowOffsetX * labelShadowScale,
+                    settings.ComboLabelShadowOffsetY * labelShadowScale);
+            }
 
+            // Container scales below stay at 1; each scale slider fans out into the child Text
+            // fontSizes (and the row's LayoutElement.preferredHeight, so VLG row spacing tracks
+            // the new text height) so glyphs re-rasterize at the chosen size rather than being
+            // stretched.
             if (timingScaleContainer != null)
             {
                 timingScaleContainer.anchoredPosition = new Vector2(0f, settings.TimingScaleY);
-                timingScaleContainer.localScale = Vector3.one * settings.TimingScaleSize;
+                timingScaleContainer.localScale = Vector3.one;
             }
+            SetRow(timingScaleRow, timingScaleLabel, timingScaleValue, settings.TimingScaleSize);
+
+            int judgementFs = Mathf.RoundToInt(RowBaseFontSize * settings.JudgementsSize);
             if (judgementsContainer != null)
             {
                 judgementsContainer.anchoredPosition = new Vector2(0f, settings.JudgementsY);
-                judgementsContainer.localScale = Vector3.one * settings.JudgementsSize;
+                judgementsContainer.localScale = Vector3.one;
             }
+            // Judgement texts have CSF for both fits, so layout auto-adjusts from fontSize alone.
+            var judgementShadow = new Vector2(ShadowBaseOffset, -ShadowBaseOffset) * settings.JudgementsSize;
+            if (judgementTexts != null)
+                foreach (var t in judgementTexts)
+                {
+                    if (t == null) continue;
+                    t.fontSize = judgementFs;
+                    var sh = t.GetComponent<Shadow>();
+                    if (sh != null) sh.effectDistance = judgementShadow;
+                }
 
             if (attemptsContainer != null)
             {
@@ -55,9 +99,36 @@ namespace Bismuth
 
             if (fpsContainer != null) fpsContainer.SetActive(settings.ShowFps);
 
-            float scale = settings.Scale;
-            if (leftContainer != null)  leftContainer.localScale  = Vector3.one * scale;
-            if (rightContainer != null) rightContainer.localScale = Vector3.one * scale;
+            if (leftContainer  != null) leftContainer.localScale  = Vector3.one;
+            if (rightContainer != null) rightContainer.localScale = Vector3.one;
+            SetRow(progressRow, progressLabel, progressValue, settings.Scale);
+            SetRow(accRow,      accLabel,      accValue,      settings.Scale);
+            SetRow(xaccRow,     xaccLabel,     xaccValue,     settings.Scale);
+            SetRow(bpmRow,      bpmLabel,      bpmValue,      settings.Scale);
+            SetRow(tileBpmRow,  tileBpmLabel,  tileBpmValue,  settings.Scale);
+        }
+
+        private const float RowBaseLayoutHeight = 30f;
+
+        private static void SetRow(GameObject row, Text label, Text value, float scale)
+        {
+            int fs = Mathf.RoundToInt(RowBaseFontSize * scale);
+            var shadowOffset = new Vector2(ShadowBaseOffset, -ShadowBaseOffset) * scale;
+            ApplyTextScale(label, fs, shadowOffset);
+            ApplyTextScale(value, fs, shadowOffset);
+            if (row != null)
+            {
+                var le = row.GetComponent<LayoutElement>();
+                if (le != null) le.preferredHeight = RowBaseLayoutHeight * scale;
+            }
+        }
+
+        private static void ApplyTextScale(Text t, int fs, Vector2 shadowOffset)
+        {
+            if (t == null) return;
+            t.fontSize = fs;
+            var sh = t.GetComponent<Shadow>();
+            if (sh != null) sh.effectDistance = shadowOffset;
         }
 
         private void PlaceRows(Settings settings)
@@ -85,10 +156,10 @@ namespace Bismuth
         {
             ApplyLevelNameTransform();
             var settings = MainClass.Settings;
-            bool hideAll        = settings.HideAllUI;
-            bool hideAutoIcon   = hideAll || settings.HideAutoplayIcon;
-            bool hideNoFail     = hideAll || settings.HideNoFail;
-            bool hideDifficulty = hideAll || settings.HideDifficulty;
+            bool hideAll        = settings.ActiveHideAllUI;
+            bool hideAutoIcon   = hideAll || settings.ActiveHideAutoplayIcon;
+            bool hideNoFail     = hideAll || settings.ActiveHideNoFail;
+            bool hideDifficulty = hideAll || settings.ActiveHideDifficulty;
 
             // RDC.noHud dereferences RDC.data; both can NRE during startup.
             try { if (RDConstants.data == null) return; }
@@ -97,7 +168,7 @@ namespace Bismuth
 
             var ctrl = scrController.instance;
             if (ctrl?.errorMeter != null && ctrl.gameworld && scnEditor.instance == null)
-                ctrl.errorMeter.gameObject.SetActive(!hideAll && !settings.HideHitmeter);
+                ctrl.errorMeter.gameObject.SetActive(!hideAll && !settings.ActiveHideHitmeter);
 
             var editor = scnEditor.instance;
             if (editor != null)
@@ -141,7 +212,7 @@ namespace Bismuth
                             ind.gameObject.SetActive(false);
                 }
 
-                if (hideAll || settings.HideBetaBuild)
+                if (hideAll || settings.ActiveHideBetaBuild)
                 {
                     var betas = Object.FindObjectsByType<scrEnableIfBeta>(FindObjectsInactive.Include, FindObjectsSortMode.None);
                     foreach (var b in betas)
@@ -149,7 +220,7 @@ namespace Bismuth
                             b.gameObject.SetActive(false);
                 }
                 if (uic.txtLevelName != null)
-                    uic.txtLevelName.gameObject.SetActive(!hideAll && !settings.HideLevelName);
+                    uic.txtLevelName.gameObject.SetActive(!hideAll && !settings.ActiveHideLevelName);
             }
         }
 
@@ -161,9 +232,18 @@ namespace Bismuth
             var rt = ctrl.txtLevelName.rectTransform;
             if (!_levelNameOrigPos.HasValue)
                 _levelNameOrigPos = rt.anchoredPosition;
-            rt.localScale = Vector3.one * settings.LevelNameScale;
-            rt.anchoredPosition = _levelNameOrigPos.Value + new Vector2(0f, settings.LevelNameY);
-            ctrl.txtLevelName.gameObject.SetActive(!settings.HideAllUI && !settings.HideLevelName);
+            // Restore any stale fontSize left over from when this used the fontSize-based path —
+            // its Shadow/Outline effectDistance is in raw pixels and doesn't track fontSize, so
+            // a shrunken fontSize misalignment-ghosted the glyphs against the unchanged shadow.
+            if (_levelNameOrigFontSize.HasValue && ctrl.txtLevelName.fontSize != _levelNameOrigFontSize.Value)
+                ctrl.txtLevelName.fontSize = _levelNameOrigFontSize.Value;
+            // localScale scales the whole subtree (glyphs + Shadow + Outline) uniformly, so
+            // the drop-shadow offset stays correct. The default use is shrinking (0.5×), where
+            // downsampled glyphs from the original raster look cleaner than re-rasterising the
+            // dynamic font at a smaller size anyway.
+            rt.localScale = Vector3.one * settings.ActiveLevelNameScale;
+            rt.anchoredPosition = _levelNameOrigPos.Value + new Vector2(0f, settings.ActiveLevelNameY);
+            ctrl.txtLevelName.gameObject.SetActive(!settings.ActiveHideAllUI && !settings.ActiveHideLevelName);
         }
     }
 }

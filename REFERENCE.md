@@ -3,10 +3,6 @@
 A HarmonyX / UnityModManager overlay mod for **A Dance of Fire and Ice (ADOFAI)**.  
 Build: `xbuild Bismuth.sln` (Mono, .NET 4.8). Three expected warnings (toolset version, TextCoreModule ref).
 
-## TODO
-
-- ADOFAI updated to Unity 6 in alpha testing and has major codebase changes. Once released, mod needs to be re-developed.
-
 ---
 
 ## Log locations
@@ -35,8 +31,9 @@ Bismuth/
 │   ├── KeyViewer.cs          partial: class shell, state fields, internal cell/column types, lifecycle
 │   ├── KeyViewer.Build.cs    partial: BuildLayout / BuildPresetPanel / cell + layer construction
 │   ├── KeyViewer.Rain.cs     partial: per-frame Update, StartRainColumn / StopRainColumn
-│   ├── KeyViewer.Sprites.cs  partial: rounded sprite + shadow body sprites + shadow tip texture + gradient texture
+│   ├── KeyViewer.Sprites.cs  partial: rain shadow body sprites + shadow tip texture + gradient texture
 │   ├── KeyViewer.Keys.cs     partial: TryParseKey + GetDisplayName
+│   ├── RoundedRectGraphic.cs Procedural rounded-rect MaskableGraphic — fill, border ring, AA fringe
 │   └── KeyLimiter.cs         Harmony patches limiting input to active preset keys (sync + async/SkyHook paths)
 ├── Overlay/
 │   ├── Overlay.cs            partial: class shell, state, lifecycle (Awake/OnDestroy/scene hooks), helpers
@@ -125,15 +122,19 @@ When adding a new section to the settings GUI, follow the partial-file pattern: 
 | ----- | ------- | ------- |
 | `ShowComboDisplay` | `true` | Toggle for combo display only — independent of `ShowOverlay` |
 | `ComboDisplayY` | `0` | Y offset of the entire combo display container (px) |
-| `ComboDisplaySize` | `1.0` | Scale of the entire combo display container |
+| `ComboDisplaySize` | `1.0` | Overall scale multiplier — fans into the label/count fontSize and both shadow offsets so glyphs re-rasterize instead of stretching |
 | `ComboDisplayText` | `"Perfect Combo"` | Text shown in the combo label above the counter |
-| `ComboLabelY` | `60` | Y offset of the label wrapper relative to the counter (px) |
-| `ComboLabelSize` | `1.0` | Font size multiplier for the label (`ComboLabelBaseFontSize × size`) |
-| `ComboPulseOffsetY` | `8` | Extra Y offset (px) added to `_comboLabelWrapper` at pulse peak — label rises then settles back to `ComboLabelY` |
-| `ComboPulseScale` | `0.2` | Extra scale added to `comboDisplayValue.rectTransform` at pulse peak (`+0.2` = 20% bigger). Applies to the count text only, not the label or container |
-| `ComboPulseDuration` | `0.2` | Seconds for the pulse to decay from peak to normal |
+| `ComboLabelY` | `65` | Y offset of the label wrapper relative to the counter (px) — multiplied by `ComboDisplaySize` at apply time |
+| `ComboLabelSize` | `1.0` | Additional fontSize multiplier for the label only (`ComboLabelBaseFontSize × ComboLabelSize × ComboDisplaySize`); also scales the label shadow |
+| `ComboCountSize` | `1.0` | Additional fontSize multiplier for the count only (`ComboValueBaseFontSize × ComboCountSize × ComboDisplaySize`); also scales the count shadow |
 | `ComboCountAuto` | `false` | Whether autoplay tiles increment (but never break) the combo |
-| `ComboShadowSize` | `2` | `Shadow.effectDistance` on `comboDisplayValue` only (label keeps default) |
+| `ComboShadowOffsetX` / `ComboShadowOffsetY` | `4` / `-4` | Count (`comboDisplayValue`) drop-shadow offset in px; multiplied by `ComboDisplaySize × ComboCountSize` |
+| `ComboShadowColor` | `(0, 0, 0, 0.5)` | Count drop-shadow `Shadow.effectColor` |
+| `ComboLabelShadowOffsetX` / `ComboLabelShadowOffsetY` | `2.5` / `-2.5` | Label drop-shadow offset in px; multiplied by `ComboDisplaySize × ComboLabelSize` |
+| `ComboLabelShadowColor` | `(0, 0, 0, 0.5)` | Label drop-shadow color |
+| `ComboPulseOffsetY` | `8` | Extra Y offset (px) added to `_comboLabelWrapper` at pulse peak — label rises then settles back to `ComboLabelY` |
+| `ComboPulseScale` | `0.2` | Extra fontSize multiplier applied to the count at pulse peak (`+0.2` = 20% bigger). Animated via `fontSize`, not `localScale`, so the rasterized text stays crisp |
+| `ComboPulseDuration` | `0.2` | Seconds for the pulse to decay from peak to normal |
 | `ComboGradientMax` | `1000` | Combo count that maps to `t = 1.0` in `ComboGradient.Evaluate` |
 
 ### Gradients
@@ -155,8 +156,9 @@ Two independent panels — **Hand** and **Foot** — each driven by its own acti
 | `KvFootPresets` | 2k | Foot preset list |
 | `KvActiveHand` | `1` (12k) | Index into `KvHandPresets` |
 | `KvActiveFoot` | `0` | Index into `KvFootPresets` |
-| `ShowHandViewer` | `true` | Master toggle for the hand panel |
-| `ShowFootViewer` | `false` | Master toggle for the foot panel |
+| `ShowKeyViewer` | `true` | Top-level master toggle — when off, the KV canvas deactivates regardless of hand/foot flags. Toggle lives next to the "Key Viewer" section header (mirrors Key Limiter / Chatter Blocker pattern) |
+| `ShowHandViewer` | `true` | Hand panel toggle (subordinate to `ShowKeyViewer`) |
+| `ShowFootViewer` | `false` | Foot panel toggle (subordinate to `ShowKeyViewer`) |
 
 `Settings.Hand` / `Settings.Foot` (XmlIgnore properties) resolve the active preset for each category; both can be `null` if the list is empty.
 
@@ -168,7 +170,9 @@ Two independent panels — **Hand** and **Foot** — each driven by its own acti
 | `PersistCounts` | `true` | Save/load per-key totals to `keycounts.txt`; honoured if **either** active preset opts in |
 | `Rows` | _set by Make…Preset_ | Ordered `KeyViewerRow` list (top row defines panel width) |
 | `KeyWidth` | `60` | Top-row key width in px; lower rows stretch to match top width |
-| `Radius` | `8` | Rounded-corner radius for cell sprite (per-preset sprite) |
+| `Radius` | `8` | Cell corner radius in canvas units. Vector-rendered by `RoundedRectGraphic` so it scales cleanly with cell size at any resolution. GUI slider range 0–64 |
+| `BorderWidth` | `0` | Cell border ring thickness in canvas units (0 = no border). GUI slider range 0–16, snapped to 0.5 px |
+| `BorderIdle` / `BorderHeld` | white / white | Border ring color when idle/pressed; swapped on press/release like `BgIdle`/`BgHeld` |
 | `Gap` | `4` | Inner gap subtracted from each cell's size; also offsets rain start |
 | `X`, `Y` | `0.01`, `0.01` | Canvas anchor (0–1) of bottom-left of the panel |
 | `Scale` | `1.0` | `localScale` of the panel |
@@ -299,7 +303,12 @@ Canvas (ScreenSpaceOverlay, sortingOrder 999)
 | `_comboPulseT` | `float` | 1 → 0 over `ComboPulseDuration` seconds; drives label Y-offset animation |
 | `_comboLabelWrapper` | `RectTransform` | `ignoreLayout=true` wrapper; `anchoredPosition.y = ComboLabelY` |
 | `_levelNameOrigPos` | `Vector2?` | First-seen `anchoredPosition` of `txtLevelName.rectTransform`; reset on scene unload |
-| `ComboLabelBaseFontSize` | `const int = 24` | Base size multiplied by `ComboLabelSize` |
+| `_levelNameOrigFontSize` | `int?` | First-seen `fontSize` of `txtLevelName`; restored when the previous fontSize-based scale path is detected on disk |
+| `_comboLabelShadow` / `_comboValueShadow` | `Shadow` | Cached refs to the combo label / count drop-shadow components; written every `ApplySettings` |
+| `ShadowBaseOffset` | `const float = 2f` | Per-text drop-shadow base offset (matches `AddShadow`'s `effectDistance = (2, -2)`); stat rows / timing scale / judgement texts each scale this by their own size slider |
+| `RowBaseFontSize` | `const int = 30` | Base font size of every stat row / timing scale / judgement text; multiplied by the relevant size slider |
+| `ComboLabelBaseFontSize` | `const int = 30` | Base size multiplied by `ComboLabelSize × ComboDisplaySize` |
+| `ComboValueBaseFontSize` | `const int = 80` | Base size multiplied by `ComboCountSize × ComboDisplaySize` |
 
 ---
 
@@ -350,19 +359,86 @@ else if margin != Auto:
 
 ``` cs
 _comboPulseT -= deltaTime / ComboPulseDuration
-_comboLabelWrapper.anchoredPosition.y = ComboLabelY + ComboPulseOffsetY × _comboPulseT
-comboDisplayValue.rectTransform.localScale = Vector3.one × (1 + ComboPulseScale × _comboPulseT)
+_comboLabelWrapper.anchoredPosition.y = (ComboLabelY + ComboPulseOffsetY × _comboPulseT) × ComboDisplaySize
+comboDisplayValue.fontSize = round(ComboValueBaseFontSize × ComboDisplaySize × ComboCountSize × (1 + ComboPulseScale × _comboPulseT))
 ```
 
-Label wrapper drifts up and back; count text scales up and back. Container scale stays fixed.
+Label wrapper drifts up and back; count text re-rasterizes at the pulse-bumped fontSize so the pulse stays crisp (the previous `localScale`-based pulse blurred the text texture at peak). Container `localScale` stays fixed at 1 — all scaling fans into fontSize.
 
 **Combo gradient**: `t = Clamp01(combo / ComboGradientMax)` → applied to `comboDisplayValue.color`.
 
 ---
 
+## KeyViewer lifecycle
+
+The KeyViewer is created once per session as a `DontDestroyOnLoad` `GameObject` named `BismuthKeyViewer` and holds its own `ScreenSpaceOverlay` canvas (`sortingOrder = 100`). It owns no scene-level hooks of its own — all lifecycle calls fan out from `MainClass`.
+
+| Method | Called by | Action |
+| ------ | --------- | ------ |
+| `Create(settings)` (static) | `MainClass.TryEagerInit` | Creates the GameObject, calls `BuildCanvas`, `LoadCounts` (if any active preset has `PersistCounts`), and `BuildLayout` (if `AnyViewerOn`). Stashes `Instance` for cross-reload guard |
+| `BuildCanvas()` | `Create` only | Adds `Canvas` + `CanvasScaler` (1080p ref, ScaleWithScreenSize, matchWidthOrHeight 0.5) + `GraphicRaycaster`; sets initial active state via `AnyViewerOn` |
+| `BuildLayout()` | `Create`, `Rebuild`, lazy on first `AnyViewerOn = true` | Calls `BuildPresetPanel` for hand (sortBase 100) and foot (sortBase 1000); resets `_lastKps`/`_lastTotalPerPreset` |
+| `ApplySettings(settings)` | `MainClass.OnGUI` → `onChanged` callback | Toggles canvas active, lazy-builds layout if first true, re-positions/re-scales hand+foot panels from preset, calls `ApplyColors` (pushes `BgIdle`/`BorderIdle` + text colors to every live cell) |
+| `Rebuild(settings)` | `MainClass.OnGUI` → `onKeyViewerRebuild` callback (fires when `_needsKvRebuild`) | `ClearLayout` + `BuildLayout` + active toggle. Used for structural edits (key width, border radius, border width, gap, row keys, etc.) |
+| `ResetCounts()` | `MainClass.OnGUI` → `onKeyViewerReset` callback ("Reset Counters" button) | Zeros every per-preset `_counts` dict, empties `_hitTimes`, zeros every visible Count/Value text, resets `_lastKps`/`_lastTotalPerPreset` |
+| `SetFont(font)` | `MainClass.ApplySelectedFont` | Pushes the new font to every live cell's Name/Count text and stat cell text |
+| `SaveCounts()` | `MainClass.OnSaveGUI` (UMM "Save") and `MainClass.StopMod` | Writes `keycounts.txt` (one tab-separated `presetName\tkeycode\tcount` per line). No-op if no active preset has `PersistCounts` |
+| `LoadCounts()` | `Create` only (when `NeedsPersist`) | Parses `keycounts.txt` into `_counts`. Counts re-populate visible cells when those cells get built/rebuilt |
+| `OnDestroy()` | Unity, when `MainClass.StopMod` calls `Destroy(gameObject)` | Clears `Instance` so a later mod-enable cycle doesn't see the orphaned reference |
+
+`MainClass.StopMod` always calls `SaveCounts()` before `Destroy(gameObject)`, so per-key counts survive a mod-disable / re-enable cycle even without an explicit UMM save.
+
+### Canvas show condition
+
+`AnyViewerOn(settings)` gates both panel construction and canvas activation:
+
+``` txt
+canvas.active = !HideAllUI
+                && ShowKeyViewer
+                && ((ShowHandViewer && Hand != null) || (ShowFootViewer && Foot != null))
+```
+
+`ApplySettings` calls `_canvas.gameObject.SetActive(AnyViewerOn(...))` and builds the layout lazily on the first frame where the condition flips on. Settings UI changes route through `MainClass.OnGUI`'s `onChanged` → `keyViewer.ApplySettings`; structural changes additionally fire `onKeyViewerRebuild` (see `_needsKvRebuild` below).
+
+### Per-frame Update flow (`KeyViewer.Rain.cs`)
+
+The MonoBehaviour `Update` runs every frame regardless of canvas active state (Unity calls Update on the GameObject; the canvas being inactive only suppresses rendering, not script execution). The flow:
+
+1. For each registered key in `_keys`: query `Input.GetKeyDown` / `Input.GetKeyUp`.
+2. **Down** — enqueue `realtimeSinceStartup` into `_hitTimes` (unless ghost), bump `_counts[preset.Name][key]` for each cell rendering this key, swap each cell's `Bg.color` → `BgHeld`, `Bg.BorderColor` → `BorderHeld`, `Name.color` → `TxtHeld`, `Count.color/text` → `CountHeld` / new count; update each preset's `Total` if any cells own one; spawn rain if the row's rain is enabled.
+3. **Up** — swap each cell back to the `*Idle` colours; stop the rain column (transition to dying state).
+4. Drain `_hitTimes` of entries older than 1s; if `_hitTimes.Count` changed, push the new KPS into every KPS cell.
+5. Iterate `_rainColumns` and advance each (growing → grow Height; dying → grow BotY; destroy when BotY ≥ `RainTrackLength`).
+
+Idle/Held colour swaps are done per-cell-per-event (not per-frame), so a held key just keeps its `*Held` colours until the up event swaps them back.
+
 ## KeyViewer rendering (`KeyViewer/*`)
 
 Two independent UGUI panels parented to a single screen-space-overlay canvas (`sortingOrder = 100`). `BuildLayout` calls `BuildPresetPanel` for the hand and foot presets with distinct `sortBase` values (`100` and `1000`) so their sub-canvases never collide.
+
+### Cell rendering (`RoundedRectGraphic.cs`)
+
+Key cells and stat cells (KPS / Total) use a `RoundedRectGraphic` background instead of a baked rounded sprite. It's a `MaskableGraphic` subclass that procedurally tessellates the rounded rect in `OnPopulateMesh` at the cell's actual size — so corners stay smooth at any resolution / scale, and `Radius` / `BorderWidth` are continuous parameters rather than fixed source-texture pixel counts.
+
+| Layer | Geometry | Color |
+| ----- | -------- | ----- |
+| Fill | Triangle fan from `rect.center` to the **inner** outline (4 arcs × `segs+1` verts, CCW) | `Graphic.color` (inherited; what `Bg.color = ...` writes to) |
+| Border ring | Quad strip between outer and inner outlines (only when `BorderWidth > 0` and `BorderColor.a > 0`) | `BorderColor` |
+| AA fringe | Quad strip extending `AAFringe` units (default `1.25`) outside the outer outline | `BorderColor` (if border present) or fill color, alpha fading 1 → 0 |
+
+**Outline construction.** For each rounded rect we sample 4 quarter-arcs centred at the four offset corners of the (bw-inset for inner) rect. The fringe outline shares the **outer** corner centres with radius `r + AAFringe`, so straight-edge fringe segments line up with corner-arc fringe segments without per-vertex normal computation.
+
+**Segment count** scales with radius to keep chord length ≤ ~1 unit:
+
+``` cs
+segs = Mathf.Clamp(Mathf.CeilToInt((r + fringe) * Mathf.PI * 0.5f), 4, MaxCornerSegments)   // MaxCornerSegments default 48
+```
+
+A coarser previous formula (`r / 2`, cap 16) produced visible polyline facets inside the smooth fringe at typical small radii — `r * π/2` keeps each chord sub-pixel up to r ≈ 30.
+
+**Live colour updates.** `KeyViewer.Rain.cs` swaps both `Bg.color` and `Bg.BorderColor` on key down/up using `BgIdle`/`BgHeld` and `BorderIdle`/`BorderHeld` from the cell's preset. `KeyViewer.ApplyColors` re-pushes both on every `ApplySettings` so settings-panel colour edits propagate to live cells.
+
+Cell refs (`KeyCellRefs.Bg`, `StatCellRefs.Bg`) are typed as `RoundedRectGraphic` rather than `Image`. Color assignments still work because `Graphic.color` is the inherited base property; mesh re-tessellation happens automatically through `SetVerticesDirty`.
 
 ### Per-row layers
 
@@ -471,17 +547,19 @@ Control IDs are `"ctrl" + N` where `N` is a per-frame counter. As long as the UI
 
 ### Auto-rebuild of the key viewer
 
-`_needsKvRebuild` is a static flag set anywhere a _structural_ edit in the preset edit page happens — key width, border radius, gap, row keys text, row height, special-key insert buttons, show-rain toggle, rain-color custom/reset, add/remove row. After `DrawKvPreset` returns, the Draw loop fires `onKeyViewerRebuild` once if the flag is set, then clears it. Non-structural edits (X/Y/Scale, colors, rain animation params) route through `onChanged → ApplySettings` only, so dragging RGB sliders doesn't trigger a full layout rebuild.
+`_needsKvRebuild` is a static flag set anywhere a _structural_ edit in the preset edit page happens — key width, border radius, border width, gap, row keys text, row height, special-key insert buttons, show-rain toggle, rain-color custom/reset, add/remove row. After `DrawKvPreset` returns, the Draw loop fires `onKeyViewerRebuild` once if the flag is set, then clears it. Non-structural edits (X/Y/Scale, colors, rain animation params) route through `onChanged → ApplySettings` only, so dragging RGB sliders doesn't trigger a full layout rebuild.
+
+Border radius and border width _don't actually_ require a structural rebuild — `RoundedRectGraphic` would re-tessellate on property assignment — but they're routed through the rebuild path for parity with the existing key-width pattern. If perf becomes a concern this could be downgraded to a per-cell push.
 
 ### SettingsGui section order
 
-Overlay (Scale → Progress → Accuracy / X-Accuracy → BPM / Tile BPM → Attempts → Timing Scale → Judgements) → Combo Display → Hide UI → Tweaks → Key Limiter → Chatter Blocker → Key Viewer (Hand list + Foot list, each with Enabled toggle and Edit/Delete/Add) → Optimizations → Font → Misc.
+Overlay (Scale → Progress → Accuracy / X-Accuracy → BPM / Tile BPM → Attempts → Timing Scale → Judgements) → Combo Display → Hide UI → Tweaks → Key Limiter → Chatter Blocker → Key Viewer (header has top-level "Enabled" toggle binding `ShowKeyViewer`; then Hand list + Foot list, each with their own Enabled toggle and Edit/Delete/Add) → Optimizations → Font → Misc.
 
 The **Misc** section displays read-only stats — currently just "RAM savings (last scene load): ±X.XX MB", populated from `MainClass.LastUnloadSavingsBytes` (set asynchronously when `Resources.UnloadUnusedAssets()` completes in `OnSceneUnloaded`, measured via `Profiler.GetTotalAllocatedMemoryLong()`). Shows `----MB` until the first unload completes.
 
 ### Preset edit view
 
-`_editingPreset >= 0` short-circuits the normal `Draw` and renders only the preset editor for `(_editingIsFoot ? KvFootPresets : KvHandPresets)[_editingPreset]`. Sections inside: Name, Reset Counters button, Main Settings (Key Width, Border Radius, Gap, X, Y, Scale, Persist Counts), Edit Rows (per-row collapsible block: cell grid + Listen toggle, Height, Show Rain, Rain Color editor, `× Delete Row` button at the bottom), Key Rain (Track Length, Fade Start, Speed, Width Step, Shadow Size, Shadow Color), **Ghost Keys** (hand only — toggle + per-slot button grid + Ghost Rain Color editor), Background / Label Text (`Visible` toggle, colors, font size) / Count Text (same shape) color editors. No Apply button — rebuild is automatic via `_needsKvRebuild`.
+`_editingPreset >= 0` short-circuits the normal `Draw` and renders only the preset editor for `(_editingIsFoot ? KvFootPresets : KvHandPresets)[_editingPreset]`. Sections inside, in order: Name, Reset Counters button, Main Settings (Key Width, Gap, X, Y, Scale, Persist Counts), Edit Rows (per-row collapsible block: cell grid + Listen toggle, Height, Show Rain, Rain Color editor, `× Delete Row` button at the bottom), Key Rain (Track Length, Fade Start, Speed, Width Step, Shadow Size, Shadow Color), **Ghost Keys** (hand only — toggle + per-slot button grid + Ghost Rain Color editor), Background (Released / Pressed colors), **Border** (Radius slider, Width slider, Released / Pressed border color editors), Label Text (`Visible` toggle, colors, font size), Count Text (same shape) color editors. No Apply button — rebuild is automatic via `_needsKvRebuild`.
 
 **Cell grid widget** (`DrawCellGrid`): each cell renders as a clickable button (`▼` prefix when expanded). Selecting a cell opens an inline panel with reorder (`◀ ▶`), Delete, **Change Key** (rebinds this cell to a different key via the shared `ListenForKey()` capture; shows "Listening…" while active; hidden for KPS / Total tokens), Label override (text), and a Width slider that mirrors the symmetric cell. A `● Listen` / `■ Stop` toggle button leading the row puts the row into key-capture mode — pressing a not-yet-registered key adds it as a new cell, pressing an already-registered key removes its cell. `+ KPS` / `+ Total` insert the corresponding special tokens. Captured by `ListenForKey()` which combines `Event.KeyDown` with an explicit `Input.GetKeyDown` poll for modifier keys (macOS doesn't surface modifier-only presses as IMGUI key events).
 

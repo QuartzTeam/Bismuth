@@ -58,6 +58,7 @@ namespace Bismuth
         private Text comboDisplayLabel;
         private Text comboDisplayValue;
         private Shadow _comboValueShadow;
+        private Shadow _comboLabelShadow;
         private GameObject fpsContainer;
         private Text fpsText;
 
@@ -65,7 +66,11 @@ namespace Bismuth
         private int _fpsFrames;
         private const float FpsInterval = 0.2f;
 
-        private const int ComboLabelBaseFontSize = 24;
+        private const float ShadowBaseOffset     = 2f;
+        private const int RowBaseFontSize        = 30;
+        private const int ComboLabelBaseFontSize = 27;
+        private const int ComboValueBaseFontSize = 80;
+        private int? _levelNameOrigFontSize;
 
         private static readonly HitMargin[] DisplayedMargins =
         {
@@ -116,6 +121,7 @@ namespace Bismuth
             inLevel = false;
             RDC.noHud = false;
             _levelNameOrigPos = null;
+            _levelNameOrigFontSize = null;
         }
 
         private void OnActiveSceneChanged(Scene _, Scene __)

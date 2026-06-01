@@ -139,7 +139,7 @@ namespace Bismuth
             public static void Prefix()
             {
                 _prevAuto = RDC.auto;
-                if (RDC.auto && (MainClass.Settings.HideAutoplayText || MainClass.Settings.HideAllUI)
+                if (RDC.auto && (MainClass.Settings.ActiveHideAutoplayText || MainClass.Settings.ActiveHideAllUI)
                     && Overlay.Instance != null && Overlay.Instance.InLevel)
                     RDC.auto = false;
             }
@@ -156,12 +156,12 @@ namespace Bismuth
         {
             public static bool Prefix(scrHitTextMesh __instance, ref Vector3 position)
             {
-                if (MainClass.Settings.HideAllUI)
+                if (MainClass.Settings.ActiveHideAllUI)
                 {
                     position = new Vector3(100000f, 100000f, 100000f);
                     return true;
                 }
-                if (MainClass.Settings.HidePerfectJudgements && __instance.hitMargin == HitMargin.Perfect)
+                if (MainClass.Settings.ActiveHidePerfectJudgements && __instance.hitMargin == HitMargin.Perfect)
                     return false;
                 return true;
             }
@@ -173,7 +173,7 @@ namespace Bismuth
         {
             public static void Postfix(scrMissIndicator __instance)
             {
-                if (MainClass.Settings.HideAllUI)
+                if (MainClass.Settings.ActiveHideAllUI)
                     __instance.transform.position = new Vector3(100000f, 100000f, 100000f);
             }
         }
@@ -183,7 +183,7 @@ namespace Bismuth
         {
             var controller = scrController.instance;
             if (controller == null) return;
-            if (!MainClass.Settings.HideAllUI && !MainClass.Settings.HideHitmeter) return;
+            if (!MainClass.Settings.ActiveHideAllUI && !MainClass.Settings.ActiveHideHitmeter) return;
             var errorMeter = controller.errorMeter;
             if (errorMeter != null && controller.gameworld && errorMeter.gameObject.activeSelf)
                 errorMeter.gameObject.SetActive(false);
@@ -207,7 +207,7 @@ namespace Bismuth
         {
             public static void Postfix(OttoButtonController __instance)
             {
-                if (MainClass.Settings.HideAllUI && Overlay.Instance != null && Overlay.Instance.InLevel
+                if (MainClass.Settings.ActiveHideAllUI && Overlay.Instance != null && Overlay.Instance.InLevel
                     && __instance.button != null)
                     __instance.button.gameObject.SetActive(false);
             }

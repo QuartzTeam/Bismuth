@@ -182,7 +182,7 @@ namespace Bismuth
             go.transform.SetParent(canvasGo.transform, false);
 
             var rect = (RectTransform)go.transform;
-            rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 0.87f);
+            rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 0.85f);
             rect.pivot = new Vector2(0.5f, 0.5f);
             rect.anchoredPosition = new Vector2(0f, 0f);
 
@@ -204,11 +204,14 @@ namespace Bismuth
             label = MakeComboText(wrapGo, "ComboLabel", ComboLabelBaseFontSize);
             label.text = "Perfect Combo";
 
-            value = MakeComboText(go, "ComboValue", 60);
+            value = MakeComboText(go, "ComboValue", ComboValueBaseFontSize);
             value.text = "0";
 
             if (Instance != null)
+            {
                 Instance._comboValueShadow = value.GetComponent<Shadow>();
+                Instance._comboLabelShadow = label.GetComponent<Shadow>();
+            }
 
             return rect;
         }
@@ -223,7 +226,7 @@ namespace Bismuth
             csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
             var t = go.AddComponent<Text>();
-            t.fontSize = 15 + fontSize;
+            t.fontSize = fontSize;
             t.color = Color.white;
             t.alignment = TextAnchor.MiddleCenter;
             t.horizontalOverflow = HorizontalWrapMode.Overflow;

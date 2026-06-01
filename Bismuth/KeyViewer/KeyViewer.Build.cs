@@ -69,10 +69,6 @@ namespace Bismuth
                 }
             }
 
-            // Sprite per preset (radius can differ)
-            var sprite = MakeRoundedSprite(64, 64, Mathf.Clamp(preset.Radius, 0, 32));
-            _allSprites.Add(sprite);
-
             float keyW = preset.KeyWidth;
             float gap = preset.Gap;
 
@@ -121,12 +117,12 @@ namespace Bismuth
                     var center = new Vector2(cx, cy);
                     string tok = cell.Token;
                     if (tok == "KPS")
-                        _kpsCells.Add(CreateStatCell(panel, "KPS", center, slotW, cellH, preset, sprite));
+                        _kpsCells.Add(CreateStatCell(panel, "KPS", center, slotW, cellH, preset));
                     else if (tok == "Total")
-                        _totalCells.Add(CreateStatCell(panel, "Total", center, slotW, cellH, preset, sprite));
+                        _totalCells.Add(CreateStatCell(panel, "Total", center, slotW, cellH, preset));
                     else if (TryParseKey(tok, out KeyCode kc))
                     {
-                        CreateKeyCell(panel, kc, center, slotW, cellH, preset, sprite);
+                        CreateKeyCell(panel, kc, center, slotW, cellH, preset);
                         _rainX[kc] = cx;
                         _rainRowIndex[kc] = topRowGlobal;
                         topKeyX.Add(cx);
@@ -201,12 +197,12 @@ namespace Bismuth
                     var center = new Vector2(cx, cy);
                     string tok = cell.Token;
                     if (tok == "KPS")
-                        _kpsCells.Add(CreateStatCell(panel, "KPS", center, slot, cellH, preset, sprite));
+                        _kpsCells.Add(CreateStatCell(panel, "KPS", center, slot, cellH, preset));
                     else if (tok == "Total")
-                        _totalCells.Add(CreateStatCell(panel, "Total", center, slot, cellH, preset, sprite));
+                        _totalCells.Add(CreateStatCell(panel, "Total", center, slot, cellH, preset));
                     else if (TryParseKey(tok, out KeyCode kc))
                     {
-                        CreateKeyCell(panel, kc, center, slot, cellH, preset, sprite);
+                        CreateKeyCell(panel, kc, center, slot, cellH, preset);
                         _rainX[kc] = cx;
                         _rainRowIndex[kc] = globalR;
                     }
@@ -253,7 +249,7 @@ namespace Bismuth
         }
 
         private void CreateKeyCell(Transform parent, KeyCode key, Vector2 center, float cellW, float cellH,
-            KeyViewerPreset preset, Sprite sprite)
+            KeyViewerPreset preset)
         {
             string label = _customLabels.TryGetValue(key, out string custom) ? custom : GetDisplayName(key);
             var go = new GameObject(label);
@@ -264,10 +260,11 @@ namespace Bismuth
             rt.anchoredPosition = center;
             rt.sizeDelta = new Vector2(cellW - preset.Gap, cellH - preset.Gap);
 
-            var img = go.AddComponent<Image>();
-            img.sprite = sprite;
-            img.type = Image.Type.Sliced;
-            img.color = preset.BgIdle.ToColor();
+            var img = go.AddComponent<RoundedRectGraphic>();
+            img.Radius      = preset.Radius;
+            img.BorderWidth = preset.BorderWidth;
+            img.BorderColor = preset.BorderIdle.ToColor();
+            img.color       = preset.BgIdle.ToColor();
 
             if (!_counts.TryGetValue(preset.Name ?? "", out var presetCounts))
                 _counts[preset.Name ?? ""] = presetCounts = new Dictionary<KeyCode, int>();
@@ -293,7 +290,7 @@ namespace Bismuth
         }
 
         private StatCellRefs CreateStatCell(Transform parent, string label, Vector2 center, float cellW, float cellH,
-            KeyViewerPreset preset, Sprite sprite)
+            KeyViewerPreset preset)
         {
             var go = new GameObject(label);
             go.transform.SetParent(parent, false);
@@ -303,10 +300,11 @@ namespace Bismuth
             rt.anchoredPosition = center;
             rt.sizeDelta = new Vector2(cellW - preset.Gap, cellH - preset.Gap);
 
-            var img = go.AddComponent<Image>();
-            img.sprite = sprite;
-            img.type = Image.Type.Sliced;
-            img.color = preset.BgIdle.ToColor();
+            var img = go.AddComponent<RoundedRectGraphic>();
+            img.Radius      = preset.Radius;
+            img.BorderWidth = preset.BorderWidth;
+            img.BorderColor = preset.BorderIdle.ToColor();
+            img.color       = preset.BgIdle.ToColor();
 
             var nameText = MakeLabel(go.transform, label,
                 new Vector2(0f, 0.5f), new Vector2(1f, 1f), preset.LabelSize, false, preset.TxtIdle.ToColor());

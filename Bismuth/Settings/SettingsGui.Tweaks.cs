@@ -7,8 +7,13 @@ namespace Bismuth
     {
         private static void DrawTweaksSection(Settings settings, ref bool changed)
         {
+            GUILayout.BeginHorizontal();
             if (GUILayout.Button((_tweaksOpen ? "▼" : "►") + " Tweaks", GUILayout.ExpandWidth(false)))
                 _tweaksOpen = !_tweaksOpen;
+            bool tweaksOn = GUILayout.Toggle(settings.TweaksEnabled, " Enabled");
+            if (tweaksOn != settings.TweaksEnabled) { settings.TweaksEnabled = tweaksOn; changed = true; }
+            GUILayout.EndHorizontal();
+
             if (_tweaksOpen)
                 DrawTweaks(settings, ref changed);
         }

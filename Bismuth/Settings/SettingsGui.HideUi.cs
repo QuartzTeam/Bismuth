@@ -6,8 +6,12 @@ namespace Bismuth
     {
         private static void DrawHideUiSection(Settings settings, ref bool changed)
         {
+            GUILayout.BeginHorizontal();
             if (GUILayout.Button((_hideUiOpen ? "▼" : "►") + " Hide UI", GUILayout.ExpandWidth(false)))
                 _hideUiOpen = !_hideUiOpen;
+            bool hideUiOn = GUILayout.Toggle(settings.HideUiEnabled, " Enabled");
+            if (hideUiOn != settings.HideUiEnabled) { settings.HideUiEnabled = hideUiOn; changed = true; }
+            GUILayout.EndHorizontal();
 
             if (_hideUiOpen)
                 DrawHideUi(settings, ref changed);

@@ -32,15 +32,11 @@ namespace Bismuth
 
         private static void DrawScale(Settings settings, ref bool changed)
         {
-            GUILayout.Label($"Scale: {settings.Scale:F2}x", _noWrapLabel);
-            float scale = GUILayout.HorizontalSlider(settings.Scale, 0.5f, 3.0f, WMax(300));
-            if (scale != settings.Scale) { settings.Scale = scale; changed = true; }
+            if (SettingsInput.Slider("Scale", ref settings.Scale, 0.5f, 3.0f, 0f, "F2", "x"))
+                changed = true;
 
-            GUILayout.Space(4f);
-            GUILayout.Label("Decimal places: " + settings.Precision, _noWrapLabel);
-            float prec = GUILayout.HorizontalSlider((float)settings.Precision, 0f, 4f, WMax(300));
-            int newPrec = Mathf.RoundToInt(prec);
-            if (newPrec != settings.Precision) { settings.Precision = newPrec; changed = true; }
+            if (SettingsInput.Slider("Decimal places", ref settings.Precision, 0, 4))
+                changed = true;
         }
 
         private static void DrawProgress(Settings settings, ref bool changed)

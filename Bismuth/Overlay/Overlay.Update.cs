@@ -15,7 +15,7 @@ namespace Bismuth
                  settings.ShowAcc || settings.ShowXAcc || settings.ShowBpm || settings.ShowTileBpm ||
                  settings.ShowTimingScale || settings.ShowJudgements);
             bool paused = scrController.instance?.paused ?? false;
-            bool show = inLevel && !paused && !settings.HideAllUI && (showOverlayStats || settings.ShowComboDisplay);
+            bool show = inLevel && !paused && !settings.ActiveHideAllUI && (showOverlayStats || settings.ShowComboDisplay);
             if (canvas.gameObject.activeSelf != show)
                 canvas.gameObject.SetActive(show);
 
@@ -54,10 +54,16 @@ namespace Bismuth
             if (_comboPulseT > 0f)
             {
                 _comboPulseT = Mathf.Max(0f, _comboPulseT - Time.deltaTime / settings.ComboPulseDuration);
+                // Drive both the label offset and the count's pulse-bumped size off ComboDisplaySize
+                // so the pulse stays proportional and the count re-rasterizes at the larger size
+                // instead of stretching the texture.
                 if (_comboLabelWrapper != null)
-                    _comboLabelWrapper.anchoredPosition = new Vector2(0f, settings.ComboLabelY + settings.ComboPulseOffsetY * _comboPulseT);
+                    _comboLabelWrapper.anchoredPosition = new Vector2(0f,
+                        (settings.ComboLabelY + settings.ComboPulseOffsetY * _comboPulseT) * settings.ComboDisplaySize);
                 if (comboDisplayValue != null)
-                    comboDisplayValue.rectTransform.localScale = Vector3.one * (1f + settings.ComboPulseScale * _comboPulseT);
+                    comboDisplayValue.fontSize = Mathf.RoundToInt(
+                        ComboValueBaseFontSize * settings.ComboDisplaySize * settings.ComboCountSize
+                        * (1f + settings.ComboPulseScale * _comboPulseT));
             }
 
             if (settings.Precision != _lastPrecision)
