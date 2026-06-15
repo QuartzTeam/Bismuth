@@ -11,7 +11,7 @@ namespace Bismuth
             bool atCheckpoint = false;
             try { atCheckpoint = GCS.checkpointNum > 0; } catch { }
 
-            // Diagnostic for the open official-level judgement-saving investigation.
+            // Diagnostic for open official-level judgement-saving investigation
             try
             {
                 var trk = scrMistakesManager.marginTrackers;
@@ -19,9 +19,9 @@ namespace Bismuth
                 int hmCount = t0?.hitMargins?.Count ?? -1;
                 int last = t0?.lastHitMarginsSize ?? -1;
                 int perfectCount = (t0?.hitMarginsCount != null && t0.hitMarginsCount.Length > 3) ? t0.hitMarginsCount[3] : -1;
-                BismuthLog.Log($"OnAttempt: checkpointNum={GCS.checkpointNum} atCp={atCheckpoint} hm.Count={hmCount} lastHmSize={last} hmc[Perfect]={perfectCount} chkUsed={scrController.checkpointsUsed}");
+                BismuthLog.Debug($"OnAttempt: checkpointNum={GCS.checkpointNum} atCp={atCheckpoint} hm.Count={hmCount} lastHmSize={last} hmc[Perfect]={perfectCount} chkUsed={scrController.checkpointsUsed}");
             }
-            catch (Exception ex) { BismuthLog.Log("OnAttempt diag failed: " + ex.Message); }
+            catch (Exception ex) { BismuthLog.Debug("OnAttempt diag failed: " + ex.Message); }
 
             if (atCheckpoint)
             {
@@ -29,9 +29,9 @@ namespace Bismuth
             }
             else
             {
-                // The game only zeroes checkpointsUsed when Start runs with checkpointNum == 0.
-                // Without this, a stuck checkpointNum keeps the 0.9875^used XAcc penalty across
-                // fresh attempts.
+                /* Game only zeroes checkpointsUsed when Start runs with checkpointNum == 0.
+                   Without this, a stuck checkpointNum keeps the 0.9875^used XAcc penalty
+                   across fresh attempts */
                 try { scrController.checkpointsUsed = 0; } catch { }
                 ShowEmpty();
             }
@@ -39,7 +39,7 @@ namespace Bismuth
 
         private void SyncFromTracker()
         {
-            // Invalidate display cache so per-frame Update re-renders fresh values.
+            // Invalidate display cache so per-frame Update re-renders fresh values
             _lastProgressT = -1f;
             _lastBpm = -1f;
             _lastTileBpmVal = -1f;
@@ -50,9 +50,9 @@ namespace Bismuth
             var tracker = (trackers != null && trackers.Length > 0) ? trackers[0] : null;
             if (tracker == null) return;
 
-            // Walk the saved prefix (hitMargins[0..lastHitMarginsSize]), not the live
-            // hitMarginsCount: scnGame.Play skips RevertToLastCheckpoint outside the editor,
-            // so on revive the tracker still contains every pre-death hit.
+            /* Walk saved prefix (hitMargins[0..lastHitMarginsSize]), not live hitMarginsCount:
+               scnGame.Play skips RevertToLastCheckpoint outside editor, so on revive tracker
+               still contains every pre-death hit */
             for (int i = 0; i < _judgementCounts.Length; i++) _judgementCounts[i] = 0;
 
             var hm = tracker.hitMargins;
@@ -64,7 +64,7 @@ namespace Bismuth
                 if (mi >= 0 && mi < _judgementCounts.Length) _judgementCounts[mi]++;
             }
 
-            // Rebuild combo by walking the saved prefix backwards until the streak breaks.
+            // Rebuild combo by walking saved prefix backwards until streak breaks
             _combo = 0;
             if (hm != null)
             {
@@ -76,14 +76,14 @@ namespace Bismuth
                     if (m == HitMargin.Auto)
                     {
                         if (s != null && s.ComboCountAuto) { _combo++; continue; }
-                        // ComboCountAuto=false: auto neither breaks nor extends the streak.
+                        // ComboCountAuto=false: auto neither breaks nor extends streak
                         continue;
                     }
                     break;
                 }
             }
 
-            // Suppress the saved-checkpoint accuracy on attempt start; next AddHit repaints it.
+            // Suppress saved-checkpoint accuracy on attempt start. The next AddHit repaints it.
             var dim = new Color(0.7f, 0.7f, 0.7f);
             if (accValue != null)  { accValue.text  = "--.--%"; accValue.color  = dim; }
             if (xaccValue != null) { xaccValue.text = "--.--%"; xaccValue.color = dim; }
@@ -94,14 +94,14 @@ namespace Bismuth
         public void OnLevelStart(bool isRestart)
         {
             string key = GetLevelKey();
-            // Full attempts only count starts from 0% (no checkpoint loaded). Regular
-            // attempts count every attempt — including checkpoint restarts.
+            /* Full attempts only count starts from 0% (no checkpoint loaded). Regular
+               attempts count every attempt, including checkpoint restarts */
             bool atCp = false;
             try { atCp = GCS.checkpointNum > 0; } catch { }
 
             if (isRestart && !RDC.auto)
             {
-                // scnGame.Play(isRestart=true): in-game retry.
+                // scnGame.Play(isRestart=true): in-game retry
                 if (_currentLevelKey != null)
                 {
                     _attempts++;
@@ -115,7 +115,7 @@ namespace Bismuth
             }
             else if (!inLevel && !RDC.auto)
             {
-                // Coming from outside (exit+re-enter or first play).
+                // Coming from outside (exit+re-enter or first play)
                 if (key != null && key == _currentLevelKey)
                 {
                     _attempts++;
@@ -135,11 +135,17 @@ namespace Bismuth
             }
             _currentLevelKey = key ?? _currentLevelKey;
             inLevel = true;
-            // Reuse OnAttempt so the checkpoint sync from Awake_Rewind isn't wiped here.
+            // Reuse OnAttempt so checkpoint sync from Awake_Rewind isn't wiped here
             OnAttempt();
             if (attemptsValue != null) attemptsValue.text = _attempts.ToString();
             if (attemptsFullValue != null) attemptsFullValue.text = _fullAttempts.ToString();
             ShowOrHideElements();
+            /* Levels spawn HUD texts after scene loads, so catch them here too. Retries
+               re-stamp only HUD fonts (rewind re-localization), so the full scene scan
+               (a per-attempt hitch on large maps) is first-entry only. */
+            if (isRestart) GameFontApplier.ReapplyHud();
+            else GameFontApplier.Reapply();
+            GameUiLayout.Reapply();
         }
 
         public void OnLevelEnd()
@@ -183,9 +189,9 @@ namespace Bismuth
             if (attemptsFullValue != null) attemptsFullValue.text = "0";
         }
 
-        // labelFont/valueFont override the stat rows' label/value texts, and
-        // comboLabelFont/comboValueFont the combo display's (null = font);
-        // judgements and FPS always use the base font.
+        /* labelFont/valueFont override stat rows label/value texts, and
+           comboLabelFont/comboValueFont the combo display (null = font); judgements and FPS
+           always use base font */
         public void SetFont(TMP_FontAsset font, TMP_FontAsset labelFont = null, TMP_FontAsset valueFont = null,
             TMP_FontAsset comboLabelFont = null, TMP_FontAsset comboValueFont = null)
         {
@@ -214,8 +220,8 @@ namespace Bismuth
             if (judgementTexts != null)
                 foreach (var t in judgementTexts)
                     if (t != null) t.font = font;
-            // Changing the font asset swaps the material, dropping the underlay setup —
-            // re-apply every shadow against the new per-text material instance.
+            /* Changing the font asset swaps the material, dropping the underlay setup,
+               so re-apply every shadow against the new per-text material instance. */
             foreach (var sh in GetComponentsInChildren<TmpShadow>(true))
                 sh.Apply();
         }

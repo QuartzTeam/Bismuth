@@ -51,6 +51,13 @@ namespace Bismuth.UI.Pages
             UIBuilder.SectionHeader(parent, "Key Viewer");
             UIBuilder.Collapsible(parent, "Enable", s.ShowKeyViewer,
                 v => { s.ShowKeyViewer = v; notify?.Invoke(); rebuild(); }, null);
+            // Only show when the overlay font's family has multiple weights.
+            // NOTE: relies on the Overlay tab building first (it resets
+            // PageOverlay.RefreshFontWeightRows at the top of its Build).
+            PageOverlay.AddWeightRow(parent, "Label weight",
+                () => s.KeyViewerLabelWeight, v => s.KeyViewerLabelWeight = v);
+            PageOverlay.AddWeightRow(parent, "Count weight",
+                () => s.KeyViewerCountWeight, v => s.KeyViewerCountWeight = v);
 
             UIBuilder.Spacer(parent);
             UIBuilder.SectionHeader(parent, "Hand");

@@ -429,4 +429,8 @@ crashlytics-build.properties
 /UnityProject/[Aa]ssets/[Ss]treamingAssets/aa/*
 *.DS_Store
 .claude
+# but do track committed skills (run-bismuth, etc.) — not local settings
+!.claude/
+!.claude/skills/
+!.claude/skills/**
 Bismuth.zip

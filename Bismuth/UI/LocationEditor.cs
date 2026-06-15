@@ -24,6 +24,7 @@ namespace Bismuth.UI
         public static void Open()
         {
             if (IsActive || Overlay.Instance == null) return;
+            GameUiEditor.Close(); // one editor at a time (both at 31000)
             var s = UICore.Settings;
 
             _canvasGo = new GameObject("BismuthLocationEditor");
@@ -221,11 +222,19 @@ namespace Bismuth.UI
     // One draggable handle. Tracks its target's screen rect every frame (expanded to a
     // grabbable minimum), hides itself while the target is hidden or empty, and converts
     // pointer drags into normalized-anchor writes with screen-edge / center-line snapping.
-    internal class LocHandle : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragHandler
+    // Optional extras (used by GameUiEditor): scaling via corner grips or the scroll
+    // wheel, right-click reset, and dimmed handles for currently inactive targets.
+    internal class LocHandle : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragHandler,
+        IScrollHandler, IPointerClickHandler
     {
         public Func<RectTransform> GetTarget;
         public Action BeginDragCapture;
         public Action<Vector2> DragBy;   // screen-pixel delta from drag start
+        public Func<float> GetScale;     // current scale, with SetScale enables scaling
+        public Action<float> SetScale;   // absolute scale write (callee clamps)
+        public Action ResetTarget;       // right-click, null = no reset
+        public bool ShowInactive;        // keep a dimmed handle when the target is inactive
+        public bool TightBounds;         // size to visible child Graphics, not the target rect
         public bool LockX;
         public Canvas EditorCanvas;
         public CanvasGroup Group;
@@ -251,17 +260,19 @@ namespace Bismuth.UI
         private void LateUpdate()
         {
             var target = GetTarget?.Invoke();
-            bool show = target != null && target.gameObject.activeInHierarchy && HasContent(target);
+            bool active = target != null && target.gameObject.activeInHierarchy;
+            bool show = target != null && (active ? HasContent(target) : ShowInactive);
             // Visibility via CanvasGroup, not SetActive — a disabled GameObject would stop
             // receiving LateUpdate and never come back.
-            Group.alpha = show ? 1f : 0f;
+            Group.alpha = show ? (active ? 1f : 0.45f) : 0f;
             Group.blocksRaycasts = show;
             Group.interactable = show;
             if (!show) return;
 
             // SSO canvases share the screen-pixel world space; both canvases use the same
             // scaler config so a single scaleFactor converts to editor-canvas units.
-            target.GetWorldCorners(_corners);
+            if (!(TightBounds && active && TryTightCorners(target)))
+                target.GetWorldCorners(_corners);
             float sf = EditorCanvas.scaleFactor;
             Vector2 min = _corners[0] / sf;
             Vector2 max = _corners[2] / sf;
@@ -270,12 +281,82 @@ namespace Bismuth.UI
             if (size.y < MinH) { float d = (MinH - size.y) * 0.5f; min.y -= d; size.y = MinH; }
             _rt.anchoredPosition = min;
             _rt.sizeDelta = size;
+
+            if (SetScale != null && !_gripsMade) MakeGrips();
         }
 
-        // An empty container (all rows toggled off) still has padding-driven size; only
-        // offer a handle when something inside is actually visible.
+        // Handle center in screen pixels (SSO canvas world units are screen px).
+        internal Vector2 ScreenCenter()
+        {
+            float sf = EditorCanvas != null ? EditorCanvas.scaleFactor : 1f;
+            return (Vector2)_rt.position + _rt.sizeDelta * (0.5f * sf);
+        }
+
+        // Photoshop-style corner grips: drag toward/away from the handle center to
+        // scale. Children with their own drag handlers, so grip drags don't bubble
+        // into the move-drag on this handle.
+        private bool _gripsMade;
+
+        private void MakeGrips()
+        {
+            _gripsMade = true;
+            var corners = new[] { Vector2.zero, Vector2.right, Vector2.up, Vector2.one };
+            foreach (var c in corners)
+            {
+                var go = new GameObject("Grip", typeof(RectTransform));
+                var rt = (RectTransform)go.transform;
+                rt.SetParent(transform, false);
+                rt.anchorMin = rt.anchorMax = c;
+                rt.pivot = new Vector2(0.5f, 0.5f);
+                rt.anchoredPosition = Vector2.zero;
+                rt.sizeDelta = new Vector2(12f, 12f);
+
+                var bg = go.AddComponent<RoundedRectGraphic>();
+                bg.Radius = 2f;
+                bg.AAFringe = 0.5f;
+                bg.BorderWidth = 1f;
+                bg.BorderColor = new Color(0f, 0f, 0f, 0.6f);
+                bg.color = Theme.Accent;
+                bg.raycastTarget = true;
+
+                go.AddComponent<ScaleGrip>().Owner = this;
+            }
+        }
+
+        // Union of the visible child Graphics' rects, for targets whose own rect has
+        // dead space (the error meter wrapper extends well below its drawn content).
+        // Writes _corners[0]/[2] (the only ones used) and reports whether it found
+        // anything to measure.
+        private static readonly Vector3[] _tightTmp = new Vector3[4];
+
+        private bool TryTightCorners(RectTransform target)
+        {
+            Vector2 min = new Vector2(float.MaxValue, float.MaxValue);
+            Vector2 max = new Vector2(float.MinValue, float.MinValue);
+            bool any = false;
+            foreach (var g in target.GetComponentsInChildren<Graphic>(false))
+            {
+                if (!g.isActiveAndEnabled || g.color.a < 0.05f) continue;
+                g.rectTransform.GetWorldCorners(_tightTmp);
+                min = Vector2.Min(min, _tightTmp[0]);
+                max = Vector2.Max(max, _tightTmp[2]);
+                any = true;
+            }
+            if (!any) return false;
+            _corners[0] = min;
+            _corners[2] = max;
+            return true;
+        }
+
+        // An empty container (all rows toggled off) still has padding-driven size, so
+        // only offer a handle when something inside is actually visible. A target that
+        // draws its own Graphic counts as content even when every child is inactive.
+        // The death % text carries inactive auxiliary labels, which hid its handle
+        // exactly when the real death message was on screen.
         private static bool HasContent(RectTransform target)
         {
+            var g = target.GetComponent<Graphic>();
+            if (g != null && g.enabled) return true;
             if (target.childCount == 0) return true;
             for (int i = 0; i < target.childCount; i++)
                 if (target.GetChild(i).gameObject.activeSelf) return true;
@@ -337,6 +418,56 @@ namespace Bismuth.UI
             _dragging = false;
             // Push through the full apply chain once per drop (per-frame would also run
             // KeyLimiter etc. needlessly).
+            UICore.OnSettingsChanged?.Invoke();
+        }
+
+        public void OnScroll(PointerEventData e)
+        {
+            if (SetScale == null || GetScale == null || Mathf.Approximately(e.scrollDelta.y, 0f)) return;
+            SetScale(GetScale() * (1f + 0.1f * Mathf.Sign(e.scrollDelta.y)));
+        }
+
+        public void OnPointerClick(PointerEventData e)
+        {
+            if (ResetTarget == null || e.button != PointerEventData.InputButton.Right) return;
+            ResetTarget();
+            UICore.OnSettingsChanged?.Invoke();
+        }
+    }
+
+    // Corner grip on a LocHandle: dragging scales the target around the handle center
+    // (uniform, the ratio of the pointer's current to initial distance from center).
+    internal class ScaleGrip : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragHandler
+    {
+        public LocHandle Owner;
+
+        private bool _scaling;
+        private Vector2 _center;
+        private float _startDist;
+        private float _startScale;
+
+        public void OnBeginDrag(PointerEventData e)
+        {
+            if (Owner == null || Owner.GetScale == null || Owner.SetScale == null ||
+                e.button != PointerEventData.InputButton.Left) return;
+            _center = Owner.ScreenCenter();
+            _startDist = (e.position - _center).magnitude;
+            if (_startDist < 2f) return;
+            _startScale = Owner.GetScale();
+            _scaling = true;
+        }
+
+        public void OnDrag(PointerEventData e)
+        {
+            if (!_scaling) return;
+            float f = (e.position - _center).magnitude / _startDist;
+            Owner.SetScale(_startScale * f);
+        }
+
+        public void OnEndDrag(PointerEventData e)
+        {
+            if (!_scaling) return;
+            _scaling = false;
             UICore.OnSettingsChanged?.Invoke();
         }
     }
