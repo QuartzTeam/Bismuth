@@ -62,12 +62,20 @@ namespace Bismuth
             Settings.Save(modEntry);
         }
 
+        // Flush all persistent data now. Used by UpdateChecker before replacing files.
+        internal static void PersistNow()
+        {
+            if (_modEntry == null) return;
+            OnSaveGUI(_modEntry);
+        }
+
         // Tear everything down so the freshly loaded assembly starts from a clean slate.
         // The old assembly stays in memory (Mono can't unload it), but nothing of ours
         // may survive in the scene: DDOL GameObjects, Harmony patches, scene callbacks.
         private static bool OnUnload(UnityModManager.ModEntry modEntry)
         {
             if (LocationEditor.IsActive) LocationEditor.Close();
+            if (GameUiEditor.IsActive) GameUiEditor.Close();
             OnSaveGUI(modEntry);
             if (IsEnabled) StopMod(modEntry);
             return true;
@@ -112,20 +120,23 @@ namespace Bismuth
                 ApplySelectedFont();
                 KeyLimiter.Apply(Settings);
 
+                GameUiLayout.Reapply();
                 UICore.Initialize(_modEntry, Settings, () =>
                 {
                     overlay?.ApplySettings(Settings);
                     keyViewer?.ApplySettings(Settings);
                     KeyLimiter.Apply(Settings);
+                    GameUiLayout.Reapply();
                 }, availableFonts);
                 UICore.OnKeyViewerRebuild = () => keyViewer?.Rebuild(Settings);
                 UICore.Tabs.AddTab("Overlay", PageOverlay.Build);
                 UICore.Tabs.AddTab("Key Viewer", PageKeyViewer.Build);
                 UICore.Tabs.AddTab("Input", PageInput.Build);
                 UICore.Tabs.AddTab("Hide UI", PageHideUi.Build);
-                UICore.Tabs.AddTab("Locations", PageLocations.Build);
                 UICore.Tabs.AddTab("UI", PageUI.Build);
+                UICore.Tabs.AddTab("Game UI", PageGameUi.Build);
                 UICore.Tabs.AddTab("Misc", PageMisc.Build);
+                UpdateChecker.Begin(_modEntry);
                 return true;
             }
             catch (Exception ex)
@@ -189,8 +200,35 @@ namespace Bismuth
 
             overlay.SetFont(target.TmpFont, labelEntry?.TmpFont, valueEntry?.TmpFont,
                 comboLabelEntry?.TmpFont, comboValueEntry?.TmpFont);
-            overlay.SetLevelNameFont(target.Font);
-            keyViewer?.SetFont(target.TmpFont);
+            var kvLabelEntry   = FindFamilyWeight(family, Settings.KeyViewerLabelWeight);
+            var kvCountEntry   = FindFamilyWeight(family, Settings.KeyViewerCountWeight);
+            keyViewer?.SetFont((kvLabelEntry ?? target).TmpFont, (kvCountEntry ?? target).TmpFont,
+                countExplicit: kvCountEntry != null);
+            // Game text has its own font, decoupled from the overlay font (Game UI
+            // tab). Titles get the configured weight, defaulting to the heaviest.
+            FontLoader.FontEntry gameEntry =
+                FontLoader.Find(availableFonts, Settings.GameFontName)
+                ?? FontLoader.Find(availableFonts, "Pretendard-Regular")
+                ?? target;
+            FontLoader.SplitWeight(gameEntry.Name, out string gameFamily, out _);
+            var titleEntry = FindFamilyWeight(gameFamily, Settings.GameTextTitleWeight)
+                ?? FindFamilyWeight(gameFamily, FontLoader.WeightHeaviest);
+            // The level name is a game HUD element: its weight lives in the Game UI
+            // Element-weights list ("levelname"), drawn from the game font family, and
+            // defaults to the title weight (bold) when unset.
+            string lnWeight = Settings.GameUiWeightFor("levelname");
+            var levelNameEntry = (!string.IsNullOrEmpty(lnWeight) ? FindFamilyWeight(gameFamily, lnWeight) : null)
+                ?? titleEntry ?? gameEntry;
+            overlay.SetLevelNameFont(levelNameEntry.Font);
+            // Weight table for the per-element overrides (Game UI tab → Element weights).
+            var gameWeights = new Dictionary<string, FontLoader.FontEntry>(StringComparer.OrdinalIgnoreCase);
+            foreach (var e in availableFonts)
+            {
+                FontLoader.SplitWeight(e.Name, out string fam, out string w);
+                if (fam == gameFamily && !string.IsNullOrEmpty(w)) gameWeights[w] = e;
+            }
+            GameFontApplier.SetElementWeights(gameWeights);
+            GameFontApplier.SetFonts(gameEntry.Font, gameEntry.TmpFont, titleEntry?.Font, titleEntry?.TmpFont);
         }
 
         private static FontLoader.FontEntry FindFamilyWeight(string family, string weight)
@@ -231,9 +269,18 @@ namespace Bismuth
                 UnityEngine.Object.Destroy(keyViewer.gameObject);
                 keyViewer = null;
             }
+            // Wrappers inserted into the game's UI hierarchy must not outlive the mod
+            // (hot reloads would otherwise stack stale wrappers from dead assemblies).
+            GameUiEditor.Close();
+            GameUiLayout.RestoreAll();
+            GameFontApplier.RestoreAll();
             // Runtime-created TMP assets (SDF atlases + materials) would otherwise pile up
             // across hot reloads — Mono keeps the old assembly alive.
             FontLoader.DestroyTmpAssets(availableFonts);
+            UpdateChecker.Dispose();
+            UpdatePopup.Close();
+            DuplicateInstallPopup.Close();
+            LogViewer.Close();
             UICore.Dispose();
         }
     }

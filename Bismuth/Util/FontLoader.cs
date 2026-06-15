@@ -12,14 +12,14 @@ namespace Bismuth
         {
             public readonly string Name;
             public readonly Font Font;
-            // Same family's Bold weight, wired by LinkFamilies after the scan.
+            // Same family Bold weight, wired by LinkFamilies after scan
             internal FontEntry BoldSibling;
             private TMP_FontAsset _tmp;
 
             public FontEntry(string name, Font font) { Name = name; Font = font; }
 
-            // Created on first use: dynamic SDF atlas, with the family's real Bold in the
-            // weight table so <b>/FontStyles.Bold doesn't fall back to synthetic bold.
+            /* Created on first use: dynamic SDF atlas, with family real Bold in weight
+               table so <b>/FontStyles.Bold doesn't fall back to synthetic bold */
             public TMP_FontAsset TmpFont
             {
                 get
@@ -51,17 +51,17 @@ namespace Bismuth
             }
         }
 
-        // Canonical ordering for the weight cycle. Names not in this list sort last,
-        // in scan order.
+        /* Canonical ordering for weight cycle. Names not in this list sort last, in
+           scan order */
         internal static readonly string[] WeightOrder =
         {
             "Thin", "ExtraLight", "UltraLight", "Light", "Regular", "Medium",
             "SemiBold", "DemiBold", "Bold", "ExtraBold", "UltraBold", "Heavy", "Black",
         };
 
-        // "Pretendard SemiBold" / "Pretendard-SemiBold" → ("Pretendard", "SemiBold"); a name
-        // whose last token isn't a known weight is a single-weight family shown under its
-        // full name.
+        /* "Pretendard SemiBold" / "Pretendard-SemiBold" maps to ("Pretendard",
+           "SemiBold"). A name whose last token isn't a known weight is a single-weight
+           family, shown under its full name. */
         internal static void SplitWeight(string name, out string family, out string weight)
         {
             family = name;
@@ -88,12 +88,12 @@ namespace Bismuth
             return WeightOrder.Length;
         }
 
-        // Weight-override sentinel: resolves to the family's heaviest weight at apply
-        // time, so it tracks family switches instead of pinning a specific name.
+        /* Weight-override sentinel: resolves to family heaviest weight at apply time, so
+           it tracks family switches instead of pinning specific name */
         internal const string WeightHeaviest = "Heaviest";
 
-        // Saved settings may spell a font with spaces ("Maplestory Bold") while the
-        // bundle asset uses hyphens ("Maplestory-Bold") — match ignoring both.
+        /* Saved settings may spell font with spaces ("Maplestory Bold") while bundle
+           asset uses hyphens ("Maplestory-Bold"), match ignoring both */
         private static string NormalizeName(string s) =>
             s == null ? "" : s.Replace(" ", "").Replace("-", "").ToLowerInvariant();
 
@@ -128,7 +128,7 @@ namespace Bismuth
             {
                 string name = Path.GetFileName(filePath);
                 if (Path.GetExtension(filePath).ToLowerInvariant() == ".meta") continue;
-                // Skip bundles that belong to a different platform.
+                // Skip bundles belonging to different platform
                 foreach (string s in new[] { "-mac", "-win", "-linux" })
                     if (s != suffix && name.EndsWith(s, StringComparison.OrdinalIgnoreCase))
                         goto next;
@@ -185,7 +185,7 @@ namespace Bismuth
             }
             finally
             {
-                // Unload bundle structure but keep assets alive in memory.
+                // Unload bundle structure but keep assets alive in memory
                 bundle?.Unload(false);
             }
         }

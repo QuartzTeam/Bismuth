@@ -6,6 +6,8 @@ namespace Bismuth
     {
         private void Update()
         {
+            GameFontApplier.Tick();
+            GameUiLayout.Tick();
             if (inLevel && scrController.instance == null)
                 inLevel = false;
 

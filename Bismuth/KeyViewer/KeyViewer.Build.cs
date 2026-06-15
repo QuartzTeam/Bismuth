@@ -12,7 +12,8 @@ namespace Bismuth
         {
             // ApplySelectedFont normally runs right after Create; the game's default TMP
             // font covers the window where no bundled font has been applied yet.
-            if (_font == null) _font = TMP_Settings.defaultFontAsset;
+            if (_labelFont == null) _labelFont = TMP_Settings.defaultFontAsset;
+            if (_countFont == null) _countFont = _labelFont;
 
             _nextRowIdx = 0;
             if (_settings.ShowHandViewer && _settings.Hand != null)
@@ -341,9 +342,11 @@ namespace Bismuth
             rt.offsetMin = rt.offsetMax = Vector2.zero;
             var t = go.AddComponent<TextMeshProUGUI>();
             t.text = text;
-            t.font = _font;
+            // `bold` marks count/value cells: they take the count font, and faux Bold
+            // only when no explicit count weight is chosen.
+            t.font = bold ? _countFont : _labelFont;
             t.fontSize = fontSize;
-            t.fontStyle = bold ? FontStyles.Bold : FontStyles.Normal;
+            t.fontStyle = bold && !_countFontExplicit ? FontStyles.Bold : FontStyles.Normal;
             t.alignment = TextAlignmentOptions.Center;
             t.color = color;
             t.textWrappingMode = TextWrappingModes.NoWrap;

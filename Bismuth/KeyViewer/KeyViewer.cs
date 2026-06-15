@@ -26,7 +26,9 @@ namespace Bismuth
         // Draggable panel rects for the location editor.
         internal RectTransform HandPanel => _handPanel;
         internal RectTransform FootPanel => _footPanel;
-        private TMP_FontAsset _font;
+        private TMP_FontAsset _labelFont;
+        private TMP_FontAsset _countFont;
+        private bool _countFontExplicit;
 
         // Persistent across rebuilds
         // Per-preset counts: presetName → (key → count). Each preset persists its own totals.
@@ -225,18 +227,32 @@ namespace Bismuth
             _lastTotalPerPreset.Clear();
         }
 
-        internal void SetFont(TMP_FontAsset font)
+        // Labels and counts take independent weights. countExplicit = the user picked
+        // a real weight for counts, so the legacy faux-Bold style is dropped (it would
+        // stack engine bold on top of the chosen weight).
+        internal void SetFont(TMP_FontAsset labelFont, TMP_FontAsset countFont, bool countExplicit)
         {
-            _font = font;
+            _labelFont = labelFont;
+            _countFont = countFont != null ? countFont : labelFont;
+            _countFontExplicit = countExplicit;
+            var countStyle = countExplicit ? TMPro.FontStyles.Normal : TMPro.FontStyles.Bold;
             foreach (var kvp in _keyCells)
                 foreach (var c in kvp.Value)
                 {
                     if (c == null) continue;
-                    if (c.Name  != null) c.Name.font  = font;
-                    if (c.Count != null) c.Count.font = font;
+                    if (c.Name  != null) c.Name.font  = _labelFont;
+                    if (c.Count != null) { c.Count.font = _countFont; c.Count.fontStyle = countStyle; }
                 }
-            foreach (var s in _kpsCells)   { if (s?.Name != null) s.Name.font = font; if (s?.Value != null) s.Value.font = font; }
-            foreach (var s in _totalCells) { if (s?.Name != null) s.Name.font = font; if (s?.Value != null) s.Value.font = font; }
+            foreach (var s in _kpsCells)
+            {
+                if (s?.Name != null) s.Name.font = _labelFont;
+                if (s?.Value != null) { s.Value.font = _countFont; s.Value.fontStyle = countStyle; }
+            }
+            foreach (var s in _totalCells)
+            {
+                if (s?.Name != null) s.Name.font = _labelFont;
+                if (s?.Value != null) { s.Value.font = _countFont; s.Value.fontStyle = countStyle; }
+            }
         }
 
         internal void SaveCounts()

@@ -158,6 +158,7 @@ namespace Bismuth.UI.Pages
             {
                 UIBuilder.Collapsible(body, "Use overlay font", s.LevelNameUseOverlayFont,
                     v => { s.LevelNameUseOverlayFont = v; notify?.Invoke(); }, null);
+                // Level-name weight moved to Game UI → Element weights ("Level Name").
                 UIBuilder.Slider(body, "Scale", s.LevelNameScale, 0.1f, 3f,
                     v => { s.LevelNameScale = v; notify?.Invoke(); }, "0.00");
                 UIBuilder.Slider(body, "Y offset", s.LevelNameY, -500f, 500f,
@@ -265,7 +266,7 @@ namespace Bismuth.UI.Pages
 
         internal static Action RefreshFontWeightRows;
 
-        private static void AddWeightRow(Transform parent, string label,
+        internal static void AddWeightRow(Transform parent, string label,
             Func<string> get, Action<string> set, bool includeHeaviest = false)
         {
             var host = UIBuilder.Rect("Weight_" + label, parent);

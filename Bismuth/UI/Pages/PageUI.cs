@@ -11,6 +11,33 @@ namespace Bismuth.UI.Pages
         {
             var s = UICore.Settings;
 
+            // Bismuth-element on-screen position editor (moved from the old Locations tab).
+            UIBuilder.SectionHeader(content, "Locations");
+            UIBuilder.Description(content,
+                "Drag elements directly on screen: the status panels, combo display and its " +
+                "label (vertical only), judgements, timing scale, attempts and key viewer panels. " +
+                "Elements snap to the screen edges, a 10px inset margin, and the center lines. " +
+                "Hidden elements have no handle — enable them first. " +
+                "Move or close this panel if it covers something; finish with the Done " +
+                "button at the top of the screen.");
+            UIBuilder.Button(content, "Edit positions on screen", LocationEditor.Open);
+            UIBuilder.DangerButton(content, "Reset all positions", () =>
+            {
+                s.StatusLeftX  = 0.005f; s.StatusLeftY  = 0.99f;
+                s.StatusRightX = 0.995f; s.StatusRightY = 0.99f;
+                s.ComboDisplayX = 0.5f;   s.ComboDisplayAnchorY = 0.85f;
+                s.ComboDisplayY = 0f;
+                s.JudgementsX = 0.5f;     s.JudgementsAnchorY = 0f;
+                s.JudgementsY = 0f;
+                s.TimingScaleX = 0.5f;    s.TimingScaleAnchorY = 0.12f;
+                s.TimingScaleY = 0f;
+                s.AttemptsX = 0.77f;      s.AttemptsY = 0.05f;
+                if (s.Hand != null) { s.Hand.X = 0.01f; s.Hand.Y = 0.01f; }
+                if (s.Foot != null) { s.Foot.X = 0.01f; s.Foot.Y = 0.01f; }
+                UICore.OnSettingsChanged?.Invoke();
+            });
+
+            UIBuilder.Spacer(content);
             UIBuilder.SectionHeader(content, "Scale");
             UIBuilder.Slider(content, "UI scale", s.UiScale, 0.5f, 2.0f, v => UICore.ApplyScale(v), "0.00");
 
@@ -69,10 +96,15 @@ namespace Bismuth.UI.Pages
         // One font selector = a family cycle row plus a weight cycle row underneath that
         // only exists while the chosen family has more than one weight. The weight row is
         // rebuilt on every family change since CycleSelector's option list is fixed.
-        private static void BuildFontSelector(
+        // Internal: PageGameUi reuses it for the game-text font.
+        // defaultOption (optional) prepends a sentinel family entry (e.g. "Game
+        // default"): selecting it fires onDefault instead of apply and clears the
+        // weight row. defaultSelected starts the dropdown on it.
+        internal static void BuildFontSelector(
             Transform parent, string label,
             IList<FontLoader.FontEntry> fonts, string currentName,
-            Action<FontLoader.FontEntry> apply)
+            Action<FontLoader.FontEntry> apply,
+            string defaultOption = null, bool defaultSelected = false, Action onDefault = null)
         {
             if (fonts == null || fonts.Count == 0)
             {
@@ -104,7 +136,13 @@ namespace Bismuth.UI.Pages
 
             SplitWeight(string.IsNullOrEmpty(currentName) ? fonts[0].Name : currentName,
                 out string curFamily, out string curWeight);
-            int familyIdx = Mathf.Max(0, familyNames.IndexOf(curFamily));
+            int offset = defaultOption != null ? 1 : 0;
+            var familyOptions = new List<string>(familyNames.Count + offset);
+            if (offset == 1) familyOptions.Add(defaultOption);
+            familyOptions.AddRange(familyNames);
+            int familyIdx = defaultSelected && offset == 1
+                ? 0
+                : offset + Mathf.Max(0, familyNames.IndexOf(curFamily));
 
             // Weight row container — sized by its own layout group so the page VLG picks
             // up the row when present and collapses it when empty.
@@ -140,9 +178,20 @@ namespace Bismuth.UI.Pages
                     });
             };
 
-            UIBuilder.Dropdown(parent, label, familyNames, familyIdx, idx =>
+            UIBuilder.Dropdown(parent, label, familyOptions, familyIdx, idx =>
             {
-                var entries = byFamily[familyNames[idx]];
+                if (offset == 1 && idx == 0)
+                {
+                    for (int i = weightHost.transform.childCount - 1; i >= 0; i--)
+                    {
+                        var c = weightHost.transform.GetChild(i);
+                        c.SetParent(null);
+                        UnityEngine.Object.Destroy(c.gameObject);
+                    }
+                    onDefault?.Invoke();
+                    return;
+                }
+                var entries = byFamily[familyNames[idx - offset]];
                 // Family change always lands on Regular when the family has it (carrying
                 // the previous weight over surprises — e.g. Maplestory-Bold → Pretendard
                 // landed on Bold); fall back to the previous weight, then the lightest.
@@ -151,7 +200,7 @@ namespace Bismuth.UI.Pages
                 if (pick < 0) pick = 0;
                 SplitWeight(entries[pick].Name, out _, out curWeight);
                 apply(entries[pick]);
-                rebuildWeights(idx, curWeight);
+                rebuildWeights(idx - offset, curWeight);
             });
 
             weightHost = UIBuilder.Rect("Weights_" + label, parent);
@@ -162,7 +211,8 @@ namespace Bismuth.UI.Pages
             vlg.childForceExpandHeight = false;
             vlg.spacing = 2f;
 
-            rebuildWeights(familyIdx, curWeight);
+            if (!(defaultSelected && offset == 1))
+                rebuildWeights(familyIdx - offset, curWeight);
         }
     }
 }

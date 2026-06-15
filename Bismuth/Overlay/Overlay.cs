@@ -5,19 +5,19 @@ using UnityEngine.UI;
 
 namespace Bismuth
 {
-    // Overlay is split into partial files by responsibility:
-    //   Overlay.cs        (this) — class shell, state, lifecycle (Awake/OnDestroy/scene hooks), helpers
-    //   Overlay.Build.cs  — UGUI tree construction (canvas, containers, rows, combo, FPS, judgements)
-    //   Overlay.Update.cs — per-frame Update + UpdateDisplay
-    //   Overlay.Game.cs   — game-event handlers (OnAttempt, OnLevelStart, OnLevelEnd, ShowEmpty, SetFont, ResetAttempts)
-    //   Overlay.Apply.cs  — ApplySettings, PlaceRows/Attach, ShowOrHideElements, ApplyLevelNameTransform
+    /* Overlay is split into partial files by responsibility:
+         Overlay.cs        (this): class shell, state, lifecycle (Awake/OnDestroy/scene hooks), helpers
+         Overlay.Build.cs:  UGUI tree construction (canvas, containers, rows, combo, FPS, judgements)
+         Overlay.Update.cs: per-frame Update + UpdateDisplay
+         Overlay.Game.cs:   game-event handlers (OnAttempt, OnLevelStart, OnLevelEnd, ShowEmpty, SetFont, ResetAttempts)
+         Overlay.Apply.cs:  ApplySettings, PlaceRows/Attach, ShowOrHideElements, ApplyLevelNameTransform */
     public partial class Overlay : MonoBehaviour
     {
         public static Overlay Instance { get; private set; }
         public bool InLevel => inLevel;
 
-        // Location-edit mode (Locations tab). Forces the canvas visible so elements can
-        // be dragged outside a level; ShowEmpty() supplies placeholder values.
+        /* Location-edit mode (Locations tab). Forces canvas visible so elements can be
+           dragged outside a level; ShowEmpty() supplies placeholder values */
         private bool _editMode;
         internal bool EditMode
         {
@@ -29,7 +29,7 @@ namespace Bismuth
             }
         }
 
-        // Draggable element rects for the location editor.
+        // Draggable element rects for location editor
         internal RectTransform LeftPanelRect  => leftContainer as RectTransform;
         internal RectTransform RightPanelRect => rightContainer as RectTransform;
         internal RectTransform ComboRect      => comboDisplayContainer;
@@ -50,8 +50,9 @@ namespace Bismuth
         private string _currentLevelKey;
         private int _combo;
         private float _comboPulseT;
-        // Per-attempt hit counts (one slot per HitMargin). We track internally because the
-        // game's tracker.hitMarginsCount can carry stale checkpoint state into a fresh attempt.
+        /* Per-attempt hit counts (one slot per HitMargin). Tracked internally because
+           game tracker.hitMarginsCount can carry stale checkpoint state into a fresh
+           attempt */
         private readonly int[] _judgementCounts = new int[12];
 
         private GameObject progressRow;
@@ -96,7 +97,7 @@ namespace Bismuth
         private const float ShadowBaseOffset     = 2f;
         private const int RowBaseFontSize        = 27;
         private const int ComboLabelBaseFontSize = 24;
-        private const int ComboValueBaseFontSize = 80;
+        private const int ComboValueBaseFontSize = 90;
         private int? _levelNameOrigFontSize;
 
         private static readonly HitMargin[] DisplayedMargins =
@@ -112,18 +113,18 @@ namespace Bismuth
         private float _lastTileBpmTime = -1f;
         private float _lastTileBpm;
         private Vector2? _levelNameOrigPos;
-        // txtLevelName is legacy uGUI Text, so this is the bundled legacy Font of the
-        // selected overlay entry (set by MainClass), not a TMP asset. The original game
-        // font is cached per scene so the toggle can restore it.
+        /* txtLevelName is legacy uGUI Text, so this is the bundled legacy Font of the
+           selected overlay entry (set by MainClass), not a TMP asset. Original game font
+           is cached per scene so toggle can restore it */
         private Font _levelNameFont;
         private Font _levelNameOrigFont;
-        // Bismuth drop shadow on txtLevelName (legacy Shadow — that text never went TMP),
-        // plus the game's own enabled Shadow/Outline effects, suspended while ours shows.
-        // All per-scene, like the font cache above.
+        /* Bismuth drop shadow on txtLevelName (legacy Shadow, that text never went TMP),
+           plus game own enabled Shadow/Outline effects, suspended while Bismuth shadow
+           shows. All per-scene, like the font cache above */
         private Shadow _levelNameShadow;
         private Shadow[] _levelNameGameEffects;
 
-        // Cached values to avoid per-frame string allocation when display hasn't changed.
+        // Cached values to avoid per-frame string allocation when display unchanged
         private float _lastProgressT = -1f;
         private float _lastBpm = -1f;
         private float _lastTileBpmVal = -1f;
@@ -167,6 +168,12 @@ namespace Bismuth
         private void OnActiveSceneChanged(Scene _, Scene __)
         {
             ShowOrHideElements();
+            /* New scene = fresh game text objects, so repaint them if the option is on.
+               An immediate sweep alone is not enough: localization re-stamps fonts in
+               object Start(), after this event, and the delayed sweeps catch that. */
+            GameFontApplier.Reapply();
+            GameFontApplier.RequestFullSweepSoon();
+            GameUiLayout.Reapply();
         }
 
         private static string GetLevelKey()
@@ -174,8 +181,8 @@ namespace Bismuth
             var controller = scrController.instance;
             if (controller == null) return null;
             string name = controller.levelName;
-            // Official levels: levelName = GCS.internalLevelName (e.g. "1-1").
-            // Custom levels: levelName falls back to "scnGame"; use scnGame.levelPath instead.
+            // Official levels: levelName = GCS.internalLevelName (e.g. "1-1")
+            // Custom levels: levelName falls back to "scnGame", so use scnGame.levelPath instead
             if (string.IsNullOrEmpty(name) || name == "scnGame")
             {
                 string path = scnGame.instance?.levelPath;
@@ -186,7 +193,7 @@ namespace Bismuth
 
         private static Color MarginColor(HitMargin m)
         {
-            // RDConstants.data is a lazy getter that can NRE inside during startup.
+            // RDConstants.data is a lazy getter that can NRE inside during startup
             RDConstants data;
             try { data = RDConstants.data; }
             catch { return Color.white; }

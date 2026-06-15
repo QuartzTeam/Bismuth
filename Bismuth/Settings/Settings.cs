@@ -84,6 +84,24 @@ namespace Bismuth
         }
     }
 
+    // Per-element font-weight override for one of the game's own HUD elements
+    // (GameFontApplier). "" / absent = the automatic bold/regular heuristic.
+    public class GameUiTextWeight
+    {
+        public string Key;
+        public string Weight = "";
+    }
+
+    // Saved layout override for one of the game's own HUD elements (GameUiLayout).
+    // Offsets are in the element's parent-canvas units. Scale multiplies localScale.
+    public class GameUiOverride
+    {
+        public string Key;
+        public float OffX;
+        public float OffY;
+        public float Scale = 1f;
+    }
+
     public class Settings : UnityModManager.ModSettings
     {
         public bool ShowProgress = true;
@@ -106,8 +124,35 @@ namespace Bismuth
         public string StatValueWeight = "";
         public string ComboLabelWeight = "";
         public string ComboValueWeight = FontLoader.WeightHeaviest;
+        // Level-name weight now lives in GameUiTextWeights under the "levelname" key
+        // (Game UI → Element weights), drawn from the game font family.
+        public string KeyViewerLabelWeight = "";
+        public string KeyViewerCountWeight = "";
         // Repaint the game's song title/artist text with the overlay font.
         public bool LevelNameUseOverlayFont = true;
+        // Repaint ALL of the game's own text (legacy Text, TMP, 3D TextMesh) with the
+        // game font below. On by default since June 2026 (the Game UI tab's "Game
+        // default" font entry turns it off). The field name is kept for settings
+        // compat. The font is no longer tied to the overlay font, see the Game UI tab.
+        public bool GameTextUseOverlayFont = true;
+        // Game-text font (family + weight entry name), independent of FontName.
+        public string GameFontName = "Pretendard-Regular";
+        // Weight used for title/bold game text (scrHUDText titles, level select).
+        public string GameTextTitleWeight = FontLoader.WeightHeaviest;
+        // Separate size multiplier for the level-select per-level stats panels
+        // (attempts, max x-acc, …) under "StatsText Container", applied on top of
+        // GameFontApplier's baked base (0.8×). 1.0 = the tuned default.
+        public float GameStatsScale = 1f;
+        // Size multiplier for the hit-judgement popups (Perfect/완벽 …), applied ONLY to
+        // them on top of the global game-text scale. 1.0 = follow the global size.
+        public float GameJudgementScale = 1f;
+        // Extra size multiplier on top of the automatic per-font metric scaling.
+        // Pretendard reads larger than the game's fonts even after normalization,
+        // especially on world-space menu text.
+        public float GameTextScale = 1f;
+        // Line-advance multiplier for repainted game text, applied on top of
+        // GameFontApplier's baked base (1.5×). 1.0 = the tuned default.
+        public float GameTextLineSpacing = 1f;
         // Master switch + color for every overlay text shadow. Combo label/count keep
         // their dedicated shadow colors but obey the switch.
         public bool OverlayShadowEnabled = true;
@@ -166,6 +211,10 @@ namespace Bismuth
 
         public bool BlockInputsWhileMenuOpen = true;
 
+        // User chose "Keep both" in the duplicate-install prompt (Mods/ + UMMMods/).
+        // Don't nag again.
+        public bool IgnoreDuplicateInstall = false;
+
         public bool KeyLimiterEnabled = true;
         public bool KeyLimiterUseKvKeys = true;
         public string KeyLimiterCustomKeys = "";
@@ -209,18 +258,34 @@ namespace Bismuth
         public float LevelNameY     = 30f;
 
         // Normalized screen anchors for the draggable elements (Locations tab). Defaults
-        // reproduce the historical fixed placements at the 1920×1080 reference resolution
-        // (status panels: 10px inset from the top corners).
-        public float StatusLeftX  = 0.0052f;
-        public float StatusLeftY  = 0.9907f;
-        public float StatusRightX = 0.9948f;
-        public float StatusRightY = 0.9907f;
+        // approximate the historical fixed placements at the 1920×1080 reference
+        // resolution (status panels: ~10px inset from the top corners), rounded clean.
+        public float StatusLeftX  = 0.005f;
+        public float StatusLeftY  = 0.99f;
+        public float StatusRightX = 0.995f;
+        public float StatusRightY = 0.99f;
         public float ComboDisplayX       = 0.5f;
         public float ComboDisplayAnchorY = 0.85f;
         public float JudgementsX         = 0.5f;
         public float JudgementsAnchorY   = 0f;
         public float TimingScaleX        = 0.5f;
         public float TimingScaleAnchorY  = 0.12f;
+
+        // Game HUD layout overrides (GameUiLayout / GameUiEditor). The hit error meter
+        // is positioned by the game itself via a normalized anchor + size scale, so its
+        // override is absolute. Everything else is an offset entry in GameUiOverrides.
+        public bool  GameErrorMeterOverride = false;
+        public float GameErrorMeterX = 0.5f;
+        public float GameErrorMeterY = 0.03f;
+        public float GameErrorMeterScale = 1f; // multiplier on the in-game size setting
+        public List<GameUiOverride> GameUiOverrides = new List<GameUiOverride>();
+        // Per-element game-text weight overrides (Game UI tab → Element weights).
+        public List<GameUiTextWeight> GameUiTextWeights = new List<GameUiTextWeight>();
+
+        // One-time seeding gate for the curated default layout below: an EMPTY list is
+        // also a legitimate user state (everything reset to vanilla), so emptiness
+        // alone can't trigger re-seeding the way the KV presets do.
+        public bool GameUiDefaultsSeeded = false;
 
         public ColorGradient ProgressGradient;
         public ColorGradient AccGradient;
@@ -289,7 +354,68 @@ namespace Bismuth
             }
             foreach (var p in KvHandPresets) p.EnsureDefaults();
             foreach (var p in KvFootPresets) p.EnsureDefaults();
+
+            // Curated default game-HUD layout (June 2026, baked from the author's
+            // tuned setup): win/death texts pulled toward the center and scaled down
+            // from the oversized stock sizes. Seeded once on fresh installs, never
+            // re-applied over an existing (or deliberately emptied) layout.
+            if (!GameUiDefaultsSeeded)
+            {
+                GameUiDefaultsSeeded = true;
+                if (GameUiOverrides == null || GameUiOverrides.Count == 0)
+                    GameUiOverrides = MakeGameUiDefaults();
+                if (GameUiTextWeights == null || GameUiTextWeights.Count == 0)
+                    GameUiTextWeights = MakeGameUiWeightDefaults();
+            }
         }
+
+        internal string GameUiWeightFor(string key)
+        {
+            if (GameUiTextWeights == null) return "";
+            foreach (var w in GameUiTextWeights)
+                if (w != null && w.Key == key) return w.Weight ?? "";
+            return "";
+        }
+
+        internal void SetGameUiWeight(string key, string weight)
+        {
+            if (GameUiTextWeights == null) GameUiTextWeights = new List<GameUiTextWeight>();
+            GameUiTextWeights.RemoveAll(w => w == null || w.Key == key);
+            if (!string.IsNullOrEmpty(weight))
+                GameUiTextWeights.Add(new GameUiTextWeight { Key = key, Weight = weight });
+        }
+
+        // Bismuth default for one game-HUD element. null = vanilla is the default.
+        internal static GameUiOverride DefaultGameUiOverride(string key)
+        {
+            foreach (var o in MakeGameUiDefaults())
+                if (o.Key == key) return o;
+            return null;
+        }
+
+        internal static List<GameUiOverride> MakeGameUiDefaults() => new List<GameUiOverride>
+        {
+            new GameUiOverride { Key = "presstostart", OffY = -400f, Scale = 0.4f },
+            new GameUiOverride { Key = "congrats",     OffY = 25f,   Scale = 0.85f },
+            new GameUiOverride { Key = "countdown",    OffY = 70f,   Scale = 0.75f },
+            new GameUiOverride { Key = "percent",      OffY = -35f,  Scale = 0.3f },
+            new GameUiOverride { Key = "results",      OffY = -30f,  Scale = 0.8f },
+            new GameUiOverride { Key = "strictclear",  OffY = 300f,  Scale = 0.4f },
+            new GameUiOverride { Key = "autoplay",     OffX = 650f, OffY = -750f, Scale = 1f },
+        };
+
+        // Curated per-element game-text weights, baked alongside the layout.
+        internal static List<GameUiTextWeight> MakeGameUiWeightDefaults() => new List<GameUiTextWeight>
+        {
+            new GameUiTextWeight { Key = "presstostart", Weight = "Thin" },
+            new GameUiTextWeight { Key = "congrats",     Weight = "Black" },
+            new GameUiTextWeight { Key = "countdown",    Weight = "Bold" },
+            new GameUiTextWeight { Key = "results",      Weight = "Light" },
+            new GameUiTextWeight { Key = "strictclear",  Weight = "Bold" },
+            new GameUiTextWeight { Key = "autoplay",     Weight = "Light" },
+            new GameUiTextWeight { Key = "judgement",    Weight = "Black" },
+            new GameUiTextWeight { Key = "levelname",    Weight = "Medium" },
+        };
 
         // Shorthand builder for default-preset rows. Tokens are space-separated; append `:Label` to
         // override the displayed text (e.g. `Backspace:Back`).

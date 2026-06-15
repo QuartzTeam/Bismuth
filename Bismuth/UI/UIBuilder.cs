@@ -51,6 +51,24 @@ namespace Bismuth.UI
             return t;
         }
 
+        // Muted wrapped body copy under a section header (used for the on-screen
+        // editor explanations).
+        public static GameObject Description(Transform parent, string text)
+        {
+            var wrap = Rect("Desc", parent);
+            var vlg = wrap.AddComponent<VerticalLayoutGroup>();
+            vlg.childControlWidth = true;
+            vlg.childControlHeight = true;
+            vlg.childForceExpandWidth = true;
+            vlg.childForceExpandHeight = false;
+            vlg.padding = new RectOffset(10, 4, 0, 6);
+
+            var t = Label(wrap.transform, text, (int)LabelFontSize - 2, TextAnchor.UpperLeft, Theme.TextMuted);
+            t.horizontalOverflow = HorizontalWrapMode.Wrap;
+            t.verticalOverflow = VerticalWrapMode.Overflow;
+            return wrap;
+        }
+
         public static GameObject SectionHeader(Transform parent, string text)
         {
             var go = Rect(text + "Header", parent);

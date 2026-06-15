@@ -1,7 +1,7 @@
 # Bismuth — Developer Reference
 
 A HarmonyX / UnityModManager overlay mod for **A Dance of Fire and Ice (ADOFAI)**.  
-Build: `xbuild Bismuth.sln` (Mono, .NET 4.8). Three expected warnings (toolset version, TextCoreModule ref).
+Build: `xbuild Bismuth.sln` (Mono, .NET 4.8). A handful of expected warnings (toolset version, obsolete Unity APIs).
 
 The game is Unity 6 and ships TextMeshPro; the HUD (Overlay + KeyViewer) renders with TMP, while the settings panel stays on legacy `UnityEngine.UI.Text`. New `.cs` files must be added to `Bismuth.csproj`'s explicit `<Compile>` list.
 
@@ -81,20 +81,25 @@ Bismuth/
 │   ├── ResizeHandle.cs       8 edge/corner resize handles — BR corner 22px (visible grip), others 12px
 │   ├── TabRail.cs            Left-rail tab nav; auto-wraps each page in a ScrollRect/Viewport/Content
 │   ├── LocationEditor.cs     Drag-to-position edit mode (own SSO canvas, LocHandle per movable element, axis snapping)
+│   ├── GameUiEditor.cs       Same edit mode for the GAME's HUD elements (drag/scroll/right-click-reset, dimmed handles for inactive elements)
+│   ├── UpdatePopup.cs        "Update available" popup + DuplicateInstallPopup (Mods/ vs UMMMods/ resolution)
+│   ├── LogViewer.cs          In-game BismuthLog viewer (Misc → View log): scroll, Refresh, Open in Finder, [dbg] filter
 │   └── Pages/
 │       ├── KeyTokens.cs      Shared TokenFromKeyCode / PrettyTokenLabel helpers
 │       ├── PageOverlay.cs    Overlay stats (+separator/weight rows), combo display, attempts, song title, FPS
 │       ├── PageKeyViewer.cs  Preset lists + full preset editor (row grid, drag-reorder, rebind, submenus)
 │       ├── PageInput.cs      Menu input-block toggle + Key Limiter (chip editor + listen) + Chatter Blocker + KeyListener component
 │       ├── PageHideUi.cs     Hide UI toggles with conditional sub-container
-│       ├── PageLocations.cs  Location editor entry (opens LocationEditor)
 │       ├── PageUI.cs         Panel scale slider, panel/overlay font pickers (family + weight), accent color
+│       ├── PageGameUi.cs     Game-text repaint: game font (decoupled from overlay), title weight, size/spacing/stats sliders
 │       └── PageMisc.cs       Read-only stats (RAM savings) + misc toggles
 └── Util/
     ├── AttemptsStore.cs      Persists per-level attempt counts to `BismuthAttempts.txt`
     ├── BismuthLog.cs         File-based session logger → `BismuthLog.txt`
     ├── FontLoader.cs         Font bundle scan → FontEntry list (legacy Font + lazy TMP_FontAsset with weight table); name matching; weight parsing
-    └── TmpShadow.cs          TMP drop-shadow component — drives the SDF underlay (legacy Shadow doesn't affect TMP)
+    ├── TmpShadow.cs          TMP drop-shadow component — drives the SDF underlay (legacy Shadow doesn't affect TMP)
+    ├── GameUiLayout.cs       Game-HUD layout overrides: wrapper transforms over scrUIController elements + error meter UpdateLayout override
+    └── UpdateChecker.cs      Self-updater: Repository.json check, zip download/install, duplicate-install resolution
 ```
 
 Pages register via `UICore.Tabs.AddTab(name, BuildPage)` in `MainClass.TryEagerInit`. Pages are built **once** at registration and only shown/hidden on tab switch — anything whose option set depends on runtime state (e.g. the font-weight rows) needs an explicit refresh hook (`PageOverlay.RefreshFontWeightRows`).
@@ -170,6 +175,8 @@ This applies to all future hotkeys: **never bind Option + letter on macOS.** Cmd
 | `StatSeparator` | `" \| "` | Text between a stat row's label and value; empty falls back to `" \| "`. Trailing spaces become HLG spacing (TMP never measures trailing whitespace — see Fonts section) |
 | `StatLabelWeight` | `"Medium"` | Weight override for stat row labels (`""` = match the overlay font). Honored only when the family has that weight |
 | `StatValueWeight` | `""` | Weight override for stat row values |
+| `GameUiTextWeights["levelname"]` | (unset → title weight) | Weight for the song-title / level-name text. Lives in the Game UI → Element weights list ("Level Name"), drawn from the GAME font family; consumed by `MainClass.ApplySelectedFont` (NOT GameFontApplier — txtLevelName is Skip'd/Bismuth-managed), defaulting to `titleEntry` (heaviest) when unset. The old Overlay-tab `LevelNameWeight` row was removed June 14 2026. `ApplyLevelNameTransform` also forces the label single-line (horizontal+vertical overflow) — the game appends the speed-trial multiplier to this same Text and Pretendard's width wrapped+overlapped it |
+| `KeyViewerLabelWeight` / `KeyViewerCountWeight` | `""` | Independent weight overrides for key viewer labels vs counts (Key Viewer tab rows; only render when the overlay family has >1 weight; PageKeyViewer reuses `PageOverlay.AddWeightRow` — depends on the Overlay tab building first). An explicit count weight drops the counts' legacy faux-Bold style (`KeyViewer.SetFont(label, count, countExplicit)`) |
 | `OverlayShadowEnabled` | `true` | Master switch for every overlay text shadow (rows, judgements, attempts, FPS, combo, song title) |
 | `OverlayShadowColor` | `(0, 0, 0, 0.5)` | Master shadow color — applies to everything except combo label/count, which keep their dedicated colors but obey the switch |
 
@@ -319,7 +326,7 @@ Implementation: `KeyLimiter.Apply(settings)` populates `_allowed: HashSet<KeyCod
 
 The KeyLimiter, ChatterBlocker, and Ghost-key suppression all share a single press-list iteration in `CountAllowedInPressedKeys` and a single `RDInput.GetMain` postfix.
 
-**Ghost-key suppression** is collected at `Apply` time from the active hand preset's `GhostKeys` into `_ghosts: HashSet<KeyCode>`. It always applies — independent of the limiter / chatter toggles — so pressing a ghost key never registers as a tile hit. The postfix gate fires when any of `_active`, `_chatterActive`, or `_ghosts.Count > 0` is true.
+**Ghost-key suppression** is collected at `Apply` time from the active hand preset's `GhostKeys` into `_ghosts: HashSet<KeyCode>`. It always applies, independent of the limiter and chatter toggles, so pressing a ghost key never registers as a tile hit. The postfix gate fires when any of `_active`, `_chatterActive`, or `_ghosts.Count > 0` is true.
 
 **Menu input block**: the game reads the keyboard through **four independent layers**, all gated on `BlockInputs` (`_blockWhileOpen && UICore.IsOpen`):
 
@@ -332,18 +339,18 @@ The KeyLimiter, ChatterBlocker, and Ghost-key suppression all share a single pre
 
 `ButtonState`: `WentDown=0, WentUp=1, IsDown=2, IsUp=3`. The `AddHit` prefix additionally returns `false` while blocked.
 
-**`RawReadExempt`**: Bismuth's own pollers must keep seeing keys while the menu is open — KeyViewer's `PollKeys` (rain/counting) and PageInput's `KeyListener` (rebind + limiter Listen chips) set `KeyLimiter.RawReadExempt` in try/finally around their reads (main-thread-only plain bool). **Any new mod-side `Input` polling needs the same wrap.** The panel itself reads `UnityEngine.Input` in `UICore.HandleUpdate` (Ctrl+B) — covered by the B exemption.
+**`RawReadExempt`**: Bismuth's own pollers must keep seeing keys while the menu is open. KeyViewer's `PollKeys` (rain/counting) and PageInput's `KeyListener` (rebind + limiter Listen chips) set `KeyLimiter.RawReadExempt` in try/finally around their reads (main-thread-only plain bool). **Any new mod-side `Input` polling needs the same wrap.** The panel itself reads `UnityEngine.Input` in `UICore.HandleUpdate` (Ctrl+B), covered by the B exemption.
 
-1. **`RDInput.GetMain(ButtonState)` postfix** (limiter/chatter part) — fires when either filter is enabled (`_active || _chatterActive`), state = `WentDown`, and we're not re-entering. Clamps `__result` to `CountAllowedInPressedKeys()`, which iterates `RDInput.GetStateKeys(Down)` (via reflection), resolves each press to a Unity `KeyCode` (direct, async label via `AsyncKeyToUnityKey`, or HID fallback), then applies: **limiter** (drop if `_active && !allowed`) and **chatter** (drop if `_chatterActive` and the key's previous accepted-press time is within `_chatterThresholdSec`). On accept, the key's `_lastPressTime` is updated. P/Space pass when `scrController.state != PlayerControl` (death screen, pause menu, between tiles).
-2. **`scrMistakesManager.AddHit(HitMargin)` prefix** — fallback that returns `false` (suppressing the hit) if no allowed key is currently held (tolerant to 1-frame async delay using `Input.GetKey`).
+1. **`RDInput.GetMain(ButtonState)` postfix** (limiter/chatter part). Fires when either filter is enabled (`_active || _chatterActive`), state = `WentDown`, and we're not re-entering. Clamps `__result` to `CountAllowedInPressedKeys()`, which iterates `RDInput.GetStateKeys(Down)` (via reflection), resolves each press to a Unity `KeyCode` (direct, async label via `AsyncKeyToUnityKey`, or HID fallback), then applies: **limiter** (drop if `_active && !allowed`) and **chatter** (drop if `_chatterActive` and the key's previous accepted-press time is within `_chatterThresholdSec`). On accept, the key's `_lastPressTime` is updated. P/Space pass when `scrController.state != PlayerControl` (death screen, pause menu, between tiles).
+2. **`scrMistakesManager.AddHit(HitMargin)` prefix**. Fallback that returns `false` (suppressing the hit) if no allowed key is currently held (tolerant to 1-frame async delay using `Input.GetKey`).
 
-For the limiter's allowed-set check we always compare in the label direction (`_allowedLabels`) — `AsyncKeyToUnityKey` is ambiguous (multiple `KeyCode`s collapse to one `KeyLabel` slot). The chatter blocker still needs a Unity `KeyCode` as its state-tracking identity, so it calls `AsyncKeyToUnityKey` (best-effort) — collisions just mean a few physically distinct keys share one chatter timer, which is harmless.
+For the limiter's allowed-set check we always compare in the label direction (`_allowedLabels`), because `AsyncKeyToUnityKey` is ambiguous (multiple `KeyCode`s collapse to one `KeyLabel` slot). The chatter blocker still needs a Unity `KeyCode` as its state-tracking identity, so it calls `AsyncKeyToUnityKey` (best-effort). Collisions just mean a few physically distinct keys share one chatter timer, which is harmless.
 
 **Per-frame idempotency**: `CountAllowedInPressedKeys` may be called multiple times per frame (the game's own `GetMain` invocations + our `GetStateKeys` re-entry). Chatter decisions are cached in `_chatterDecisionThisFrame` (cleared when `Time.frameCount` changes) so the second call doesn't see `now - _lastPressTime[key] ≈ 0` and incorrectly reclassify an already-accepted press as chatter.
 
-**Modifier fallback (`_hidToKeyCode`)**: SkyHook's native bundle shipped with the game reports modifier-key presses with `label = KeyLabel.Unknown(119)` instead of the correct label — its internal `KeyLabel` table is older than the C# binding. To recover them, `CountAllowedInPressedKeys` consults the raw `AsyncKeyCode.key` field (USB HID Usage IDs, page 0x07 — _not_ macOS HIToolbox scancodes) when the label is `Unknown` and looks up `_hidToKeyCode`. Mapping: `0x39→CapsLock, 0xE0→LCtrl, 0xE1→LShift, 0xE2→LAlt, 0xE3→LCmd, 0xE4→RCtrl, 0xE5→RShift, 0xE6→RAlt, 0xE7→RCmd`.
+**Modifier fallback (`_hidToKeyCode`)**: SkyHook's native bundle shipped with the game reports modifier-key presses with `label = KeyLabel.Unknown(119)` instead of the correct label, because its internal `KeyLabel` table is older than the C# binding. To recover them, `CountAllowedInPressedKeys` consults the raw `AsyncKeyCode.key` field (USB HID Usage IDs, page 0x07, _not_ macOS HIToolbox scancodes) when the label is `Unknown` and looks up `_hidToKeyCode`. Mapping: `0x39→CapsLock, 0xE0→LCtrl, 0xE1→LShift, 0xE2→LAlt, 0xE3→LCmd, 0xE4→RCtrl, 0xE5→RShift, 0xE6→RAlt, 0xE7→RCmd`.
 
-The `0xE1`/`0xE5` codes were confirmed via diagnostic logging — earlier guesses based on the macOS HIToolbox virtual-key table (`0x38` LShift, `0x3C` RShift, …) did not match the bundle's actual output.
+The `0xE1`/`0xE5` codes were confirmed via diagnostic logging. Earlier guesses based on the macOS HIToolbox virtual-key table (`0x38` LShift, `0x3C` RShift, …) did not match the bundle's actual output.
 
 ### Hide UI
 
@@ -418,17 +425,79 @@ The HUD (Overlay + KeyViewer) is **TextMeshPro** (`TextMeshProUGUI`); the settin
 Legacy `Shadow`/`Outline` are mesh modifiers TMP ignores. `TmpShadow` drives the SDF shader's **underlay** on the text's per-instance `fontMaterial`:
 
 - `OffsetPx` keeps legacy `effectDistance` pixel semantics; converted to the shader's padding-relative units via `samplingPointSize / (atlasPadding × fontSize)` and clamped to [-1, 1] (max ≈ fontSize/10 px).
-- **`Apply()` must end with `UpdateMeshPadding()` + `SetVerticesDirty()` + `SetMaterialDirty()`** — TMP measures mesh quad padding from the material *before* a freshly assigned font asset's material has the underlay enabled, which clips the shadow to the glyph bounds.
+- **`Apply()` must end with `UpdateMeshPadding()` + `SetVerticesDirty()` + `SetMaterialDirty()`** — TMP measures mesh quad padding from the material _before_ a freshly assigned font asset's material has the underlay enabled, which clips the shadow to the glyph bounds.
 - Apply is **idempotent** (tracks last-applied enabled/color/offset/font/fontSize and no-ops when unchanged) because the regeneration above is expensive — never remove the guard.
 - Re-Apply is required after font or fontSize changes (the material instance is replaced); `Overlay.SetFont` re-applies every shadow via `GetComponentsInChildren<TmpShadow>(true)`.
 - The master pass at the end of `ApplySettings` pushes `OverlayShadowEnabled`/`OverlayShadowColor` to all shadows (combo label/count keep their own colors).
 
 ### TMP gotchas (hard-won)
 
-- **Trailing whitespace is never measured** — plain spaces *and* U+00A0 NBSPs are excluded from preferred width (an NBSP fix was tried and failed in-game). Stat row separators put only the visible part in the label and realize the trailing-space run as `HorizontalLayoutGroup.spacing`, sized via `SpaceWidth()` = `GetPreferredValues("| |") − ("||")`.
+- **Trailing whitespace is never measured** — plain spaces _and_ U+00A0 NBSPs are excluded from preferred width (an NBSP fix was tried and failed in-game). Stat row separators put only the visible part in the label and realize the trailing-space run as `HorizontalLayoutGroup.spacing`, sized via `SpaceWidth()` = `GetPreferredValues("| |") − ("||")`.
 - **`MidlineLeft` ≠ vertical centering** — Midline is the geometric center of the rendered glyph bounds, so strings with/without descenders sit at different heights. Row texts use `TextAlignmentOptions.Left` (line-metric Middle).
 - Rich text (`<color>`, `<b>`) is on by default; coop acc/xacc rows use inline color tags.
 - `enableWordWrapping` is obsolete in this TMP — use `textWrappingMode = TextWrappingModes.NoWrap`.
+
+### Game text repaint (`Util/GameFontApplier.cs`)
+
+`GameTextUseOverlayFont` sweeps ALL game text (legacy `Text`, `TMP_Text` with the original asset kept as a fallback, 3D `TextMesh`) onto the **game font** (`GameFontName`, decoupled from the overlay font). Each component's original font, size, line spacing, style, and best-fit max are cached for toggle-off restore.
+
+#### Sizing
+
+Every swap scales by the line-height/em ratio of original vs ours (clamped; `TextMesh` gets ×0.8 extra), times a **baked base ×0.6** and the `GameTextScale` slider, and widens leading by a **baked base ×1.5** and the `GameTextLineSpacing` slider. The bases were hand-tuned for Pretendard (it fills more of the em box, so equal-metric leading reads cramped); the sliders center at 1.0. Legacy `lineSpacing` is a multiplier, TMP's is additive in font units (~em%). Separately: `GameStatsScale` sizes `*StatsText*` panels, `GameJudgementScale` sizes the hit-judgement popups (scrHitTextMesh), and `GameTextTitleWeight` (default heaviest) sets the bold weight — all independent of the global scale.
+
+#### Enabling
+
+No on/off toggle. The "Game font" selector has a prepended "Game default" entry (BuildFontSelector's `defaultOption`/`onDefault`): picking it sets `GameTextUseOverlayFont=false` and hides the options block, picking any family enables the swap. Defaults ON (Pretendard-Regular). The sliders call `RequestResize()`, a debounced (+15 frame) `Restore()`+`Apply()`, needed because `Apply` skips text already on our font.
+
+#### Idempotency (three rules, each fixed a compounding bug)
+
+- **Skip guard:** the Apply* methods compute the bold decision and target font/style _before_ the early-out, and skip only when the component matches BOTH the target font and style. Skipping on "font is ours" alone froze bold-ness, because legacy bold is faux via `fontStyle` (the font stays `_font`), so keycaps stuck bold and world names stuck regular.
+- **Re-stamp adoption:** when a sweep finds a cached component whose font isn't ours (`IsOurLegacyFont`/`IsOurTmpFont`, covering regular, bold, and every element-weight font), the game re-stamped it (Start()-time localization runs after the scene-entry sweep), so the cached restore font and TextMesh material are updated to the re-stamped one. Otherwise "Game default" restored pre-localization Latin-only fonts and Korean rendered as tofu.
+- **Cached-original sizing:** all sizes derive from the cached ORIGINAL state, never current values. The game re-assigns localized fonts on rewind, defeating the skip, and computing from current values compounded the scale once per attempt.
+
+#### Bold decision (`ShouldBold(c, text, styleBold, origFontName)`)
+
+- `ForceRegular` → never. Overrides every bold signal for `scrLetterPress` keycaps and `scrBestMultiplierText` speed-trial badges ("1.5배") globally (their source font is bold and rendered Black).
+- `IsTitle` → always: `scrHUDText.isTitle`, or `scrCreditsText` for the "by 7th Beat Games" block.
+- else by **active** scene: `scnLevelSelect` → `LevelSelectBold` (whole scene, authoritative), `scnCLS` → `ClsBold` (chrome only), else the per-component heuristic (cached style bold, or original font name looks bold: bold/black/heavy/-bd).
+
+Gate on the _active_ scene (`InLevelSelect()`), not the component's own scene: the title/menu world content (floors, world names, keycaps, credits) is parented under DontDestroyOnLoad. In level select the verdict is authoritative, so the caller ignores `NameLooksBold`/style there (they mis-bold single-letter keycaps).
+
+`LevelSelectBold` bolds everything except the `NewsSign` hierarchy, the press-to-start hint cluster (`Hit Space` ancestor, holding the cycling `numberKeys`/`GameComplete*` tips), `*StatsText*` panels, and single-glyph content. The portal labels (계속/보정/…) and the visible subtitle are _also_ `scrTextChanger`, so the hints can't be excluded by component type. The `Hit Space` ancestor check isolates them (verified via desktopText keys: hints `levelSelect.numberKeys`/`GameCompleteFullPure`, labels `levelSelect.continue`/`calibration`/…, subtitle `levelSelect.subtitle`).
+
+`ClsBold` bolds only the chrome: the screen `title`, `WorldNameCanvas` portal labels, `scnCLS.instance.portalName`, the difficulty name (`Difficulty Container/.../txtValue`, "엄격"), and the `Loading` text. Body copy, level descriptions, help text, and `txtDescription` stay regular.
+
+#### Auto-fit text ignores `fontSize`
+
+- Auto-sizing TMP (scnCLS level descriptions, `enableAutoSizing`) fits text between `fontSizeMin/Max`, so short text balloons to Max. `ApplyTmp` scales the bounds (cached/restored).
+- Legacy `Text` with `resizeTextForBestFit` ignores `fontSize`; `ApplyText` scales `resizeTextMaxSize` (cached/restored). This is also how the `Continue/LastLevel` ("8-X Jungle City") ×0.6 special case takes effect.
+
+#### How bold renders (differs by system)
+
+The bundled Black **legacy `Font` asset silently renders as regular** (dynamic-font name fallback), so legacy `Text`/`TextMesh` keep the regular font and get engine faux bold via `fontStyle` (original style cached). TMP gets the real Black TMP asset (proven by the overlay combo) with the faux Bold flag stripped to avoid double-bolding. The heaviest weight is resolved in `ApplySelectedFont` (literal "Bold" as fallback).
+
+#### Per-element weights (Game UI tab → Element weights)
+
+`Settings.GameUiTextWeights` (`Key`/`Weight`, `""`=Auto) overrides the heuristic for the seven text-bearing GameUiLayout targets, the synthetic `judgement` key (pooled scrHitTextMesh popups, world-space `TMP_Text`; lookup uses `GetComponentInParent<scrHitTextMesh>(true)` because the pooled popups are inactive at sweep/Show time, and the no-arg overload would skip them), and `levelname` (consumed by MainClass, not here). `GameUiLayout.OwnerKey(c)` maps a component to its target via frame-cached `IsChildOf` checks; MainClass hands GameFontApplier a weight→FontEntry table (`SetElementWeights`); the skip-guards compare against the per-element font so weight changes re-apply. Explicit weights render with faux bold stripped.
+
+#### Sweep triggers and scoping (fixed lag spikes at start/death/retry)
+
+Full `FindObjectsByType`×3 scans (expensive on large maps) run only on scene change, first level entry, and toggle-resize, frame-deduped via `_lastSweepFrame` (`SetFonts` bypasses, since font identity changed). Everything else — the +2/+30 state-change ticks and `Play(isRestart=true)` retries — uses `ReapplyHud()`, a `GetComponentsInChildren` sweep of just `scrUIController.canvas`, where all mid-scene text spawns and re-stamps (death %, results, congrats, rewind re-localization). Exceptions and additions:
+
+- **scnLevelSelect:** state-change ticks sweep _fully_ (`StateSweep()`). Portal labels and world names activate late on approach and live outside any canvas.
+- **Scene entry** needs delayed FULL sweeps (`RequestFullSweepSoon`, +2/+30, from `OnActiveSceneChanged` and `SetFonts`): localization assigns fonts in `Start()`, one frame after `sceneLoaded`, stomping the immediate sweep (cold launch left the title screen vanilla until the toggle was cycled).
+- **CLS navigation:** re-sweep after each `scnCLS.DisplayLevel` (it re-stamps the default font on the portal info and fires no other sweep).
+- **Pause/settings:** re-sweep on `PauseMenu.Show` / `ShowSettingsMenu` (shown over gameplay with no scene change).
+- *Known gap:* world-space win-screen extras outside the canvas (event endscreen lanterns) aren't caught by state-change sweeps.
+
+#### Other hooks
+
+- **Pause-menu bolding:** `ShouldBold` bolds everything under a `PauseMenu` ancestor except the `SettingsMenu` subtree (keeps its designed weight). The `SettingsMenu` check runs first, so it holds even when Settings is opened from the main menu where `LevelSelectBold` would otherwise catch it.
+- **Localized re-stamp:** `RDString.SetLocalizedFont` (Text/TMP/TextMesh) is postfixed → `OnLocalizedFontSet` re-applies our font immediately. The language-selector previews stamp each language's own font over ours; a script Pretendard lacks will tofu (acceptable per request).
+- **News sign:** `NewsSign.ShowNews` is postfixed with `ApplyTo` (it fills its text only when the async fetch lands, after the scene sweep).
+- **Editor exemption:** `Text`/`TMP_Text` in the `scnEditor` scene get metric normalization only (no `GameTextScale`, no leading change), because the hand-fitted form panels break under resizing. `TextMesh` is resized everywhere.
+- **Diagnostics (opt-in):** set `GameFontApplier.DiagEnabled = true` to dump (capped 16 lines/sweep, `GameFontDiag` prefix) each matching text's path/scene/textChanger/title/lsBold/applied font. `DiagFilter` is a substring list (empty = all <40-char texts). Sweeps also log "GameFont: sweep bold-swapped N" (debug) when the count changes.
+- **`StopMod`** calls `RestoreAll()`; without it a hot-reloaded assembly (fresh Font instances, empty caches) re-caches scaled text as "original" and compounds across deploys.
 
 ### Song title (`txtLevelName`)
 
@@ -664,10 +733,11 @@ The shadow body's rect height is `bodyH + ShadowSize` (with sharp-top) or `bodyH
 | `scrPressToStart.ShowText` | Postfix | `OnLevelStart(false)` — official levels (always a fresh entry from this hook) |
 | `scrController.StartLoadingScene` | Postfix | `OnLevelEnd()` |
 | `scrUIController.WipeToBlack` | Postfix | `OnLevelEnd()` |
-| `StateBehaviour.ChangeState(States.None)` | Postfix | `OnLevelEnd()` |
+| `StateBehaviour.ChangeState(States.None)` | Postfix | `OnLevelEnd()`; every state change also requests delayed `GameFontApplier` sweeps + `GameUiLayout` re-applies (death/results text spawns late) |
 | `scnEditor.ResetScene` | Postfix | `OnLevelEnd()` |
 | `scnEditor.SwitchToEditMode` | Postfix | `ShowOrHideElements()` |
 | `scrController.LevelNameTextRestore` | Postfix | `ApplyLevelNameTransform()` — re-applies our scale/offset after the game restores canonical position |
+| `scrHitErrorMeter.UpdateLayout` | Postfix | `GameUiLayout.ApplyErrorMeter` — re-applies the meter position/scale override after the game's own layout pass |
 | `scrShowIfDebug.Update` | Pre+Post | Temporarily sets `RDC.auto = false` (if `HideAutoplayText \|\| HideAllUI`) to suppress the autoplay text |
 | `scrHitTextMesh.Show` | Prefix | Moves judgement popup off-screen (`HideAllUI`) or suppresses it (`HidePerfectJudgements`) |
 | `scrHitText.Show(Vector3, float)` | Prefix | Moves legacy judgement text off-screen (`HideAllUI`) |
@@ -696,6 +766,33 @@ All settings interaction is UGUI (the IMGUI SettingsGui/SettingsInput files were
 - `KeyListener` (PageInput) is the shared key-capture MonoBehaviour for rebind / ghost keys / limiter chips: polls a watched-key list once per frame while `Active`, fires `OnKey(KeyCode)` once, wrapped in `KeyLimiter.RawReadExempt` so capture works while the menu's input block is engaged (capture only ever happens with the menu open).
 - The **Misc** page displays read-only stats — "RAM savings (last scene load)", populated from `MainClass.LastUnloadSavingsBytes` (measured around `Resources.UnloadUnusedAssets()` in `OnSceneUnloaded`).
 - Hide UI sub-options render only while `HideAllUI` is off.
+
+---
+
+## Game UI layout overrides (`Util/GameUiLayout.cs` + `UI/GameUiEditor.cs`)
+
+Moves/scales the **game's own** HUD elements (Game UI tab → "Edit game UI on screen"; the old Locations tab was dissolved June 2026 — overlay-location entries moved to the UI tab, game-UI entries to the Game UI tab). Two mechanisms:
+
+- **Wrapper transforms.** Each `scrUIController` element gets a full-stretch `BismuthGameUiWrap_<key>` RectTransform inserted above it. Targets (keyed by field name, all public): `txtPercent`, `txtCongrats`, `txtAllStrictClear`, `txtResults`, `txtPressToStart`, `txtCountdown`, `difficultyContainer`, `modifiersContainer`, `pauseButton`, plus the autoplay label (a `scrShowIfDebug` with no static accessor, found by type via a frame-throttled `FindObjectsByType` and cached).
+  - The wrapper's rect equals the parent's, so the element's anchors/anchoredPosition keep their exact meaning, and everything the game does to the element (difficulty show/minimize `DOAnchorPosX` tweens, text rewrites) happens _inside_ the wrapper and never fights our offset/scale. Scale pivots on the element's measured center (recomputed each apply), so scaling doesn't slide elements toward screen center.
+  - Offsets live in `Settings.GameUiOverrides` (`List<GameUiOverride>`: `Key`/`OffX`/`OffY`/`Scale`, parent-canvas units).
+  - Fresh installs get a curated default layout (`MakeGameUiDefaults`, re-baked June 12 2026: presstostart/congrats/countdown/percent/results/strictclear/autoplay repositioned and scaled) and per-element text weights (`MakeGameUiWeightDefaults`: presstostart Thin, congrats Black, countdown/strictclear Bold, results/autoplay Light, judgement Black, levelname Medium). Both are seeded ONCE in `EnsureDefaults` behind the `GameUiDefaultsSeeded` flag, and `GameTextUseOverlayFont` defaults TRUE (swap on out of the box, Pretendard-Regular).
+  - Reset: right-click a handle → `ResetToDefault` (Bismuth default when the key has one, else vanilla). Game UI tab buttons "Reset layout to Bismuth defaults" (`ResetAllToDefaults`) and "Reset layout to game defaults" (`ResetAllToGame`, removes every override plus meter restore). An empty list is a legitimate "all vanilla" state, so emptiness alone must not re-seed (unlike the KV presets).
+- **Error meter** — `scrHitErrorMeter` already models position as a normalized anchor (`pos`, applied as anchorMin=anchorMax=pivot in `UpdateLayout`) and scale as `meterScale` → `localScale`. A postfix on `UpdateLayout` re-applies `Settings.GameErrorMeter{X,Y,Scale}` (absolute pos + multiplier on the in-game size setting, `GameErrorMeterOverride` gate) — covers `scrController.Awake` and the game's own settings-menu size changes, so no sweeps are needed. The game's per-size pixel offset (`anchoredPosition` 0,−30…0,−94) is zeroed when overriding. Original wrapper state is captured before the first override for restore.
+
+Re-apply triggers (fresh objects per scene): `Overlay.OnActiveSceneChanged`, `Overlay.OnLevelStart`, and delayed ticks (+2/+30 frames, `GameUiLayout.Tick` from `Overlay.Update`) requested by the `StateBehaviour.ChangeState` postfix. Wrappers are unwrapped in `StopMod` (`RestoreAll`) so hot reloads don't stack stale wrappers; `EnsureWrapper` also re-adopts an existing wrapper by name. Parents with a `LayoutGroup` are refused (would fight the stretch anchors).
+
+`GameUiEditor` mirrors `LocationEditor` (own SSO canvas at 31000, mutual exclusion between the two editors) and reuses `LocHandle`, which gained optional `GetScale`/`SetScale` (corner `ScaleGrip`s for uniform scale from the pointer-to-center distance ratio, plus scroll wheel), `ResetTarget` (right-click), `ShowInactive` (dimmed handle at the element's last layout position), and `TightBounds` (size to the union of visible child Graphics rather than the target rect, since the error meter wrapper extends well below its drawn content).
+
+- A `HandleSorter` re-orders the handle sibling block by area (largest first) each frame, so smaller handles render and raycast above the screen-blanketing congrats/results boxes.
+- The autoplay `scrShowIfDebug` lookup prefers an **active** instance (several carry a `Text`, and caching an inactive one pinned the handle to a dead object) and debug-logs each search.
+- While open it force-shows the game targets: the FULL ancestor chain up to the canvas is activated (own-GO-only left invisible handles, since win/fail containers are inactive), CanvasGroup/text alphas < 0.05 are lifted, and empty `Text`s are filled with Korean sample strings per key. All changes are recorded (four lists) and restored in reverse on Close.
+- The `results` sample is special: the real screen is a multi-line colored breakdown, so `ResultsSample` invokes the game's private `DetailedResults.GenerateResults(players[0].marginTracker)` via reflection (localized labels plus authentic `<color>` values, falling back to the static placeholder if anything is null or throws).
+- Bismuth's own overlay is NOT shown (`Overlay.EditMode` untouched, user preference). `txtLevelName` is deliberately not a target: Bismuth already owns its transform (`LevelNameScale`/`LevelNameY`).
+
+The autoplay label needs its own per-frame help: `scrShowIfDebug.Update` disables the (private) Text component every frame when autoplay/debug is off — `Behaviour.enabled`, which force-show doesn't cover. The existing `ShowIfDebugUpdatePatch` postfix re-enables it (and fills `RDString.Get("status.autoplay")` if empty) while `GameUiEditor.IsActive`; self-corrects after Close since the game rewrites both every frame.
+
+Level-editor caveat: `scnEditor.LateUpdate` force-writes `uiController.canvas.enabled = playMode` **every frame**, so outside play mode the whole HUD canvas is disabled and force-show alone leaves handles over nothing. `EditorLateUpdateShowHudPatch` (postfix on that LateUpdate) re-enables the canvas while `GameUiEditor.IsActive`; no restore needed — the game's per-frame write takes back over after Close.
 
 ---
 
@@ -746,6 +843,35 @@ Lives in the mod folder (`MainClass.ModPath`), so all Bismuth-owned persistent d
 | Method | Purpose |
 | ------ | ------- |
 | `Init()` | Called by `MainClass.StartMod` — clears the file and writes a timestamped session header |
-| `Log(message)` | Appends `[HH:mm:ss] message\n`; no-op if `Init` failed; swallows IO exceptions |
+| `Log(message)` | Appends `[HH:mm:ss] message\n`; no-op if `Init` failed; swallows IO exceptions. Plain file IO — safe from background threads |
+| `Debug(message)` | `Log` with a `"[dbg] "` prefix, for high-frequency diagnostics (hook traces, per-attempt dumps). The in-game viewer hides `[dbg]` lines unless its Debug toggle is on |
+| `ReadTail(maxChars)` | Tail of the current log for the in-game viewer, capped ~12k chars (uGUI Text 65k-vertex limit) |
 
-Use `BismuthLog.Log(...)` for any Bismuth-specific diagnostic output. The UMM log (`modEntry.Logger`) is still used by `FontLoader` for font load results.
+Use `BismuthLog.Log(...)` for any Bismuth-specific diagnostic output, `Debug(...)` for anything per-hook/per-attempt. The UMM log (`modEntry.Logger`) is still used by `FontLoader` for font load results.
+
+### LogViewer (`UI/LogViewer.cs`)
+
+Misc → "View log" opens a standalone window (own canvas) showing `ReadTail()`, auto-scrolled to the newest lines. Buttons: Refresh, Open in Finder (`Application.OpenURL("file://" + ModPath)` — opens the mod folder), Debug on/off (`[dbg]` line filter, default off), Close.
+
+---
+
+## Self-updater (`Util/UpdateChecker.cs` + `UI/UpdatePopup.cs`)
+
+UMMCompat doesn't run UMM's own updater, so the mod updates itself. `UpdateChecker.Begin(modEntry)` (from `TryEagerInit`) fetches `Repository.json` (the URL comes from Info.json's `Repository` field, kept current by `release.sh`). A newer `Releases[0].Version` shows `UpdatePopup` with three buttons: **Update now (requires restart)**, **Manual update** (opens the releases page derived from `DownloadUrl`), and **Later**.
+
+"Update now" downloads the release zip and extracts the `Bismuth/` payload over every existing install dir, running copy last, dll last within each (UMM watches it for hot reload). Persistent data survives by construction: the zip carries only the payload and nothing is deleted, and `MainClass.PersistNow()` flushes settings/counts first. On success the primary button becomes **Close**.
+
+**Dual-install handling.** Native UMM loads from `<game>/Mods/Bismuth`, MelonLoader+UMMCompat from `<game>/UMMMods/Bismuth`. When both exist (and `Settings.IgnoreDuplicateInstall` is unset), `DuplicateInstallPopup` asks which loader is in use and offers to delete the unused copy. Deleting the _running_ copy first flushes and carries `Settings.xml`/`keycounts.txt`/`BismuthAttempts.txt` to the kept dir. The version check runs after the prompt resolves.
+
+### MelonLoader/UMMCompat landmines (all hit while building this)
+
+1. **`modEntry.Info.Repository` is not populated** from Info.json — the checker has a hardcoded fallback URL.
+2. **UnityWebRequest coroutines silently never resume** — no timeout, no error, no completion. Networking runs on the ThreadPool, results drained by `Update()` under a lock.
+3. **Child processes inherit `DYLD_INSERT_LIBRARIES`** (MelonLoader's arm64 bootstrap dylib), which dyld refuses to load into arm64e system binaries — curl dies with exit 134. `CurlFetch` strips `DYLD_*`/`LD_PRELOAD` from the child env. Applies to ANY `Process.Start` from the mod.
+4. **`JsonUtility.FromJson` silently returned nothing** for Repository.json — the two fields are parsed with regexes instead.
+
+Transport order: curl subprocess (macOS / Win10+ / Linux) → .NET `WebClient` fallback (TLS 1.2 forced via `ServicePointManager`). Every stage logs to BismuthLog (`Update check: …`, `Update worker: …`).
+
+### Popup canvases: sortingOrder is signed 16-bit
+
+`Canvas.sortingOrder` wraps beyond 32767 (35000 became −30536 and rendered _under_ the settings panel). Layering: LocationEditor 31000 < settings panel 32000 < LogViewer 32500 < UpdatePopup 32600 < DuplicateInstallPopup 32601. Never exceed 32767.

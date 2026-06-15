@@ -20,6 +20,8 @@ namespace Bismuth.UI.Pages
             _savingsText = UIBuilder.Label(savingsRow.transform, SavingsLabel(), (int)UIBuilder.LabelFontSize, TextAnchor.MiddleLeft, Theme.TextMuted);
             _savingsText.rectTransform.offsetMin = new Vector2(8f, 0f);
 
+            UIBuilder.Button(content, "View log", LogViewer.Show);
+
             UIBuilder.Spacer(content);
             UIBuilder.SectionHeader(content, "Optimizations");
 

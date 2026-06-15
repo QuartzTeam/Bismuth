@@ -27,9 +27,9 @@ namespace Bismuth
                 comboDisplayContainer.anchorMin = comboDisplayContainer.anchorMax =
                     new Vector2(settings.ComboDisplayX, settings.ComboDisplayAnchorY);
                 comboDisplayContainer.anchoredPosition = new Vector2(0f, settings.ComboDisplayY);
-                // ComboDisplaySize fans out into the text fontSize fields below instead of
-                // localScale so the texts re-rasterize at the chosen size — scaling the
-                // container would stretch the rasterized texture and blur the glyphs.
+                /* ComboDisplaySize fans out into text fontSize fields below instead of
+                   localScale so texts re-rasterize at chosen size; scaling the container
+                   would stretch the rasterized texture and blur the glyphs */
                 comboDisplayContainer.localScale = Vector3.one;
                 if (_comboLabelWrapper != null)
                     _comboLabelWrapper.anchoredPosition = new Vector2(0f, settings.ComboLabelY * settings.ComboDisplaySize);
@@ -42,12 +42,12 @@ namespace Bismuth
             if (comboDisplayValue != null)
             {
                 comboDisplayValue.fontSize = Mathf.RoundToInt(ComboValueBaseFontSize * settings.ComboDisplaySize * settings.ComboCountSize);
-                // Defend against leftover transient pulse scale from the old localScale-based path.
+                // Defend against leftover transient pulse scale from old localScale-based path
                 comboDisplayValue.rectTransform.localScale = Vector3.one;
             }
-            // Combo shadows — count and label each have their own offset + color. Both scale
-            // with ComboDisplaySize so the drop offset tracks the fontSize-driven text size;
-            // the label additionally scales by ComboLabelSize since its fontSize does too.
+            /* Combo shadows: count and label each have their own offset + color. Both scale
+               with ComboDisplaySize so drop offset tracks fontSize-driven text size; label
+               additionally scales by ComboLabelSize since its fontSize does too */
             var defaultShColor = new Color(0f, 0f, 0f, 0.5f);
             if (_comboValueShadow != null)
             {
@@ -68,10 +68,10 @@ namespace Bismuth
                 _comboLabelShadow.Apply();
             }
 
-            // Container scales below stay at 1; each scale slider fans out into the child Text
-            // fontSizes (and the row's LayoutElement.preferredHeight, so VLG row spacing tracks
-            // the new text height) so glyphs re-rasterize at the chosen size rather than being
-            // stretched.
+            /* Container scales below stay at 1. Each scale slider fans out into child
+               Text fontSizes (and row LayoutElement.preferredHeight, so VLG row spacing
+               tracks the new text height) so glyphs re-rasterize at the chosen size
+               rather than being stretched. */
             if (timingScaleContainer != null)
             {
                 timingScaleContainer.anchorMin = timingScaleContainer.anchorMax =
@@ -91,7 +91,7 @@ namespace Bismuth
                 var hlg = judgementsContainer.GetComponent<UnityEngine.UI.HorizontalLayoutGroup>();
                 if (hlg != null) hlg.spacing = settings.JudgementsGap;
             }
-            // Judgement texts have CSF for both fits, so layout auto-adjusts from fontSize alone.
+            // Judgement texts have CSF for both fits, so layout auto-adjusts from fontSize alone
             var judgementShadow = new Vector2(ShadowBaseOffset, -ShadowBaseOffset) * settings.JudgementsSize;
             if (judgementTexts != null)
                 foreach (var t in judgementTexts)
@@ -131,8 +131,8 @@ namespace Bismuth
             SetRow(bpmRow,      bpmLabel,      bpmValue,      settings.Scale);
             SetRow(tileBpmRow,  tileBpmLabel,  tileBpmValue,  settings.Scale);
 
-            // Master shadow pass — runs after the per-part blocks above so it has the
-            // final offsets; combo label/count keep their dedicated colors.
+            /* Master shadow pass: runs after the per-part blocks above so it has the
+               final offsets. Combo label/count keep their dedicated colors. */
             bool shadowOn = settings.OverlayShadowEnabled;
             var shadowColor = settings.OverlayShadowColor?.ToColor() ?? new Color(0f, 0f, 0f, 0.5f);
             foreach (var sh in GetComponentsInChildren<TmpShadow>(true))
@@ -144,19 +144,19 @@ namespace Bismuth
 
             ApplySeparators(settings);
 
-            // Text/spacing changes only dirty the layout for the next frame; force the
-            // rebuild now so a separator edit reflows the rows while the menu is open.
+            /* Text/spacing changes only dirty layout for the next frame, so force a
+               rebuild now so a separator edit reflows the rows while the menu is open. */
             if (leftContainer != null)         LayoutRebuilder.ForceRebuildLayoutImmediate((RectTransform)leftContainer);
             if (rightContainer != null)        LayoutRebuilder.ForceRebuildLayoutImmediate((RectTransform)rightContainer);
             if (attemptsContainer != null)     LayoutRebuilder.ForceRebuildLayoutImmediate(attemptsContainer);
             if (timingScaleContainer != null)  LayoutRebuilder.ForceRebuildLayoutImmediate(timingScaleContainer);
         }
 
-        // TMP never includes trailing whitespace in a text's preferred width (plain or
-        // non-breaking), so a separator like " | " would render flush against the value.
-        // The visible part of the separator lives in the label text; the trailing-space
-        // run is converted into HorizontalLayoutGroup.spacing sized from the actual
-        // space-glyph advance at the label's current font and size.
+        /* TMP never includes trailing whitespace in text preferred width (plain or
+           non-breaking), so a separator like " | " would render flush against the value.
+           Visible part of separator lives in label text; trailing-space run is converted
+           into HorizontalLayoutGroup.spacing sized from actual space-glyph advance at label
+           current font and size */
         private void ApplySeparators(Settings settings)
         {
             string sep = StatSeparator(settings);
@@ -170,8 +170,7 @@ namespace Bismuth
             SetRowSeparator(bpmRow,      bpmLabel,      "BPM",       visible, trail);
             SetRowSeparator(tileBpmRow,  tileBpmLabel,  "TBPM",      visible, trail);
 
-            // Fixed-format rows keep their own separators but need the same
-            // trailing-space treatment.
+            // Fixed-format rows keep their own separators but need same trailing-space treatment
             SetRowSeparator(attemptsRow,     attemptsLabel,     "Attempts",      ":", 1);
             SetRowSeparator(attemptsFullRow, attemptsFullLabel, "Full Attempts", ":", 1);
             SetRowSeparator(timingScaleRow,  timingScaleLabel,  "TimingScale",   " -", 1);
@@ -189,7 +188,7 @@ namespace Bismuth
 
         private static float SpaceWidth(TMP_Text t)
         {
-            // Interior spaces measure fine — diff a pair of glyphs with and without one.
+            // Interior spaces measure fine, so diff a pair of glyphs with and without one
             float w = t.GetPreferredValues("| |").x - t.GetPreferredValues("||").x;
             return w > 0f ? w : t.fontSize * 0.25f;
         }
@@ -274,8 +273,8 @@ namespace Bismuth
             {
                 if (uic.noFailImage != null)      uic.noFailImage.enabled = !hideNoFail;
                 if (uic.difficultyImage != null)   uic.difficultyImage.enabled = !hideDifficulty;
-                // The gameplay HUD's difficulty widget leaks into the editor when a level is
-                // loaded via the custom-levels-menu editor button; force-hide there.
+                /* Gameplay HUD difficulty widget leaks into editor when a level is loaded via
+                   the custom-levels-menu editor button; force-hide there */
                 bool inEditor = scnEditor.instance != null;
                 if (uic.difficultyContainer != null)
                 {
@@ -318,17 +317,23 @@ namespace Bismuth
             var rt = ctrl.txtLevelName.rectTransform;
             if (!_levelNameOrigPos.HasValue)
                 _levelNameOrigPos = rt.anchoredPosition;
-            // Restore any stale fontSize left over from when this used the fontSize-based path —
-            // its Shadow/Outline effectDistance is in raw pixels and doesn't track fontSize, so
-            // a shrunken fontSize misalignment-ghosted the glyphs against the unchanged shadow.
+            /* Restore any stale fontSize left over from when this used fontSize-based path:
+               its Shadow/Outline effectDistance is in raw pixels and doesn't track fontSize, so
+               a shrunken fontSize misalignment-ghosted glyphs against the unchanged shadow */
             if (_levelNameOrigFontSize.HasValue && ctrl.txtLevelName.fontSize != _levelNameOrigFontSize.Value)
                 ctrl.txtLevelName.fontSize = _levelNameOrigFontSize.Value;
-            // localScale scales the whole subtree (glyphs + Shadow + Outline) uniformly, so
-            // the drop-shadow offset stays correct. The default use is shrinking (0.5×), where
-            // downsampled glyphs from the original raster look cleaner than re-rasterising the
-            // dynamic font at a smaller size anyway.
+            /* localScale scales the whole subtree (glyphs + Shadow + Outline) uniformly, so
+               drop-shadow offset stays correct. Default use is shrinking (0.5×), where
+               downsampled glyphs from the original raster look cleaner than re-rasterising the
+               dynamic font at a smaller size anyway */
             rt.localScale = Vector3.one * settings.LevelNameScale;
             rt.anchoredPosition = _levelNameOrigPos.Value + new Vector2(0f, settings.LevelNameY);
+            /* Keep level name on one line. Game appends speed-trial multiplier ("… (1.1배)")
+               to this same Text; Pretendard is wider than stock font, so it wrapped where
+               vanilla didn't and the wrapped line overlapped the first. Label is meant to be
+               single-line */
+            ctrl.txtLevelName.horizontalOverflow = HorizontalWrapMode.Overflow;
+            ctrl.txtLevelName.verticalOverflow = VerticalWrapMode.Overflow;
 
             if (_levelNameOrigFont == null) _levelNameOrigFont = ctrl.txtLevelName.font;
             bool styled = settings.LevelNameUseOverlayFont;
@@ -336,10 +341,10 @@ namespace Bismuth
             if (wantFont != null && ctrl.txtLevelName.font != wantFont)
                 ctrl.txtLevelName.font = wantFont;
 
-            // Bismuth-style drop shadow, swapped in with the font. The game's own
-            // Shadow/Outline are suspended so the effects don't stack; the offset is
-            // divided by LevelNameScale because localScale shrinks the whole subtree,
-            // landing at the same ~2px screen offset as the overlay rows.
+            /* Bismuth-style drop shadow, swapped in with the font. Game own Shadow/Outline
+               are suspended so effects don't stack; offset is divided by LevelNameScale
+               because localScale shrinks the whole subtree, landing at the same ~2px screen
+               offset as the overlay rows */
             if (styled)
             {
                 if (_levelNameShadow == null)
