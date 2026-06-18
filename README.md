@@ -10,8 +10,8 @@ An overlay / QoL mod for **A Dance of Fire and Ice** (3.1.0+).
 - Custom fonts: drop a font into `Mods/Bismuth/Resources/` and pick it from the settings
 
 Tested Environments:
-- macOS 26.5, ADOFAI v3.1.1
-- Arch Linux, kernel 7.0, ADOFAI v3.1.0, with & without proton
+- macOS 26.5, ADOFAI v3.1.2
+- Arch Linux, kernel 7.0, ADOFAI v3.1.1
 
 ## Install
 
@@ -19,5 +19,10 @@ Tested Environments:
 2. Download the latest `Bismuth.zip` from [Releases](https://github.com/sbrothers7/Bismuth/releases).
 3. Extract into `…/A Dance of Fire and Ice/Mods/`.
 4. Launch and toggle **Bismuth** on in the mods menu.
+
+If you are using MelonLoader:
+
+1. Install the UMMCompat plugin.
+2. Extract into `…/A Dance of Fire and Ice/UMMMods/`.
 
 See [REFERENCE.md](REFERENCE.md) for the developer reference.
