@@ -282,7 +282,18 @@ namespace Bismuth
         //   GetState(InputAction, state)    — Rewired actions (restartPress, backPress, …)
         // The settings panel polls UnityEngine.Input directly (Ctrl+B, text fields), so it
         // stays responsive while all of these return "nothing pressed".
-        private static bool BlockInputs => _blockWhileOpen && UICore.IsOpen;
+        //
+        // Autoplay is EXEMPT: the game drives an autoplay run through this same input
+        // pipeline (PlayerControl_Update → planet hits), so blocking it starved the hit
+        // tracker — the results showed empty counts / NaN accuracy when the panel was open
+        // during an autoplay run. The player isn't hitting tiles manually then, so there's
+        // nothing to block.
+        private static bool BlockInputs => _blockWhileOpen && UICore.IsOpen && !Autoplaying;
+
+        private static bool Autoplaying
+        {
+            get { try { return RDC.auto; } catch { return false; } }
+        }
 
         // ── RDInput.GetMain — platform-agnostic aggregator ─────────────────
         [HarmonyPatch]

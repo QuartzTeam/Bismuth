@@ -136,6 +136,21 @@ namespace Bismuth.UI.Pages
                 ? 0
                 : offset + Mathf.Max(0, familyNames.IndexOf(curFamily));
 
+            // Preview each family name in its own font (Regular weight, else lightest).
+            var familyFonts = new List<TMPro.TMP_FontAsset>(familyOptions.Count);
+            if (offset == 1) familyFonts.Add(null); // default option keeps the panel font
+            foreach (var fam in familyNames)
+            {
+                var list = byFamily[fam];
+                var rep = list[0];
+                foreach (var e in list)
+                {
+                    SplitWeight(e.Name, out _, out string w);
+                    if (string.Equals(w, "Regular", StringComparison.OrdinalIgnoreCase)) { rep = e; break; }
+                }
+                familyFonts.Add(rep.TmpFont);
+            }
+
             // Weight row container — sized by its own layout group so the page VLG picks
             // up the row when present and collapses it when empty.
             GameObject weightHost = null;
@@ -154,11 +169,13 @@ namespace Bismuth.UI.Pages
                 if (entries.Count <= 1) return;
 
                 var weightNames = new List<string>(entries.Count);
+                var weightFonts = new List<TMPro.TMP_FontAsset>(entries.Count);
                 int weightIdx = 0;
                 for (int i = 0; i < entries.Count; i++)
                 {
                     SplitWeight(entries[i].Name, out _, out string w);
                     weightNames.Add(w);
+                    weightFonts.Add(entries[i].TmpFont); // each weight shown in that weight
                     if (string.Equals(w, preferredWeight, StringComparison.OrdinalIgnoreCase)) weightIdx = i;
                 }
 
@@ -167,7 +184,7 @@ namespace Bismuth.UI.Pages
                     {
                         SplitWeight(entries[idx].Name, out _, out curWeight);
                         apply(entries[idx]);
-                    });
+                    }, weightFonts);
             };
 
             UIBuilder.Dropdown(parent, label, familyOptions, familyIdx, idx =>
@@ -193,7 +210,7 @@ namespace Bismuth.UI.Pages
                 SplitWeight(entries[pick].Name, out _, out curWeight);
                 apply(entries[pick]);
                 rebuildWeights(idx - offset, curWeight);
-            });
+            }, familyFonts);
 
             weightHost = UIBuilder.Rect("Weights_" + label, parent);
             var vlg = weightHost.AddComponent<VerticalLayoutGroup>();

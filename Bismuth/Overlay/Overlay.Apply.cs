@@ -356,8 +356,10 @@ namespace Bismuth
             if (styled)
             {
                 var sh = GameTextShadow.Attach(ctrl.txtLevelName, owned: true);
-                // collapseNewlines keeps the speed-trial multiplier ("…\n(1.1배)") inline.
-                sh.Configure(_levelNameFont, FontStyles.Normal, 1f, collapseNewlines: true);
+                // Keep the level name on one line: collapseNewlines folds the game's "\n(1.1배)"
+                // into a space, and noWrap stops it word-wrapping at that space (the game puts
+                // the label in Wrap mode for the multi-line speed-trial variant).
+                sh.Configure(_levelNameFont, FontStyles.Normal, 1f, collapseNewlines: true, noWrap: true);
                 // Offset divided by LevelNameScale: localScale shrinks the whole subtree, so
                 // this lands at the same ~2px screen offset as the overlay rows.
                 float inv = settings.LevelNameScale > 0.01f ? 1f / settings.LevelNameScale : 1f;

@@ -156,14 +156,31 @@ namespace Bismuth
             _levelNameOrigFontSize = null;
         }
 
-        private void OnActiveSceneChanged(Scene _, Scene __)
+        private void OnActiveSceneChanged(Scene _, Scene to)
         {
             ShowOrHideElements();
             /* New scene = fresh game text objects, so repaint them if the option is on.
                An immediate sweep alone is not enough: localization re-stamps fonts in
-               object Start(), after this event, and the delayed sweeps catch that. */
-            GameFontApplier.Reapply();
-            GameFontApplier.RequestFullSweepSoon();
+               object Start(), after this event, and the delayed sweeps catch that.
+
+               A retry reloads the gameplay scene (scnGame) on every attempt; full-scanning
+               a large map's thousands of tile/decoration texts each time hitched, so there
+               we sweep only the HUD + autoplay label (scoped, delayed scoped re-sweep for
+               late HUD spawns). The first entry still full-sweeps via OnLevelStart, so
+               nothing styled there is missed. Menu scenes keep the full sweep — their world
+               text activates late and outside any canvas. */
+            bool gameplay = false;
+            try { gameplay = to.name == "scnGame"; } catch { }
+            if (gameplay)
+            {
+                GameFontApplier.ReapplyHud();
+                GameFontApplier.RequestSweepSoon();
+            }
+            else
+            {
+                GameFontApplier.Reapply();
+                GameFontApplier.RequestFullSweepSoon();
+            }
             GameUiLayout.Reapply();
         }
 

@@ -58,7 +58,7 @@ namespace Bismuth
             {
                 if (t == null || !Match(t.text, t.name, Path(t.transform)) || ++n > MaxRows) continue;
                 var rt = t.transform as RectTransform;
-                string box = rt != null ? $" rect={rt.rect.size} scale={t.transform.lossyScale.x:0.###}" : "";
+                string box = rt != null ? $" rect={rt.rect.size} pos={rt.anchoredPosition} scale={t.transform.lossyScale.x:0.###}" : "";
                 BismuthLog.Log($"[probe] uGUI \"{Clip(t.text)}\"  {Path(t.transform)}  (fs={t.fontSize} bestFit={t.resizeTextForBestFit} style={t.fontStyle}{box})");
             }
             foreach (var t in UnityEngine.Object.FindObjectsByType<TMP_Text>(FindObjectsInactive.Include, FindObjectsSortMode.None))

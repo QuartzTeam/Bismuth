@@ -208,9 +208,9 @@ namespace Bismuth
             return p != null && GuestLabelNames.Contains(p.name);
         }
 
-        // Push a name down off its label (position only; cached in the stats table so Restore
-        // resets it). Idempotent — always offsets from the cached original position.
-        private static void OffsetNameDown(Transform tr, float localDown)
+        // Shift a transform in its local space (position only; cached in the stats table so
+        // Restore resets it). Idempotent — always offsets from the cached original position.
+        private static void OffsetLocal(Transform tr, float dx, float dy)
         {
             if (tr == null) return;
             XformState st;
@@ -219,8 +219,10 @@ namespace Bismuth
                 st = new XformState { Scale = tr.localScale, Pos = tr.localPosition };
                 _statsOrigScale[tr] = st;
             }
-            tr.localPosition = new Vector3(st.Pos.x, st.Pos.y - localDown, st.Pos.z);
+            tr.localPosition = new Vector3(st.Pos.x + dx, st.Pos.y + dy, st.Pos.z);
         }
+
+        private static void OffsetNameDown(Transform tr, float localDown) => OffsetLocal(tr, 0f, -localDown);
 
         /* Object-names of guest-track ROLE LABEL elements (the artist NAMES are their
            children). The label TEXT isn't a reliable signal — some labels have no colon
@@ -235,6 +237,29 @@ namespace Bismuth
             };
 
         private static bool IsGuestLabelObject(Component c) => GuestLabelNames.Contains(c.gameObject.name);
+
+        /* Custom-level-select text that should never wrap with the wider font: the rail tiles'
+           name/artist (CustomLevelTile), the description's artist line (portalArtist), and the
+           "신규!" badges (scrBadgeContainer; badge text is TMP, so this is checked on both the
+           shadow and in-place TMP paths). Gated on the CLS scene so it's a no-op elsewhere. */
+        private static bool IsClsNoWrap(Component c)
+        {
+            if (!InCls()) return false;
+            try
+            {
+                if (c.GetComponentInParent<CustomLevelTile>(true) != null) return true;
+                if (c.GetComponentInParent<scrBadgeContainer>(true) != null) return true;
+                // CLS hub portal/sign names + wave tags (WorldNameCanvas/NameText, waveTag/text):
+                // their label/sub lines ("라이브러리\n항목 22개", "추천\n클래식") wrap an extra
+                // line with the wider font.
+                if (HasAncestor(c, "WorldNameCanvas")) return true;
+                var cls = scnCLS.instance;
+                if (cls != null && (ReferenceEquals(c, cls.portalArtist) || ReferenceEquals(c, cls.portalName)))
+                    return true;
+            }
+            catch { }
+            return false;
+        }
 
         // Title/splash "by 7th Beat Games" (Phase 0/…/7thBeatGames/7th Beat Games Text) —
         // display credit that should stay on one line and fit its box, not wrap.
@@ -329,6 +354,7 @@ namespace Bismuth
         // Transform downscale + line spacing for CLS portal labels
         private const float ClsLabelScale = 0.8f;
         private const float ClsLabelLineSpacing = 1.1f;
+        private const float ClsSignScale = 1.6f;   // chain-banner level sign ("레벨"); tunable
 
         private static bool HasAncestor(Component c, string name)
         {
@@ -489,10 +515,13 @@ namespace Bismuth
             else Restore();
         }
 
-        /* Scoped sweep: only the game HUD canvas. Everything that (re)spawns or gets
-           re-stamped mid-scene (death %, results, congrats, rewind) sits under
-           scrUIController.canvas, and a full scene scan here visibly hitched at
-           start/death/retry on large maps. Full sweeps stay reserved for scene loads. */
+        /* Scoped sweep: the game HUD canvas + the world-space autoplay/status label.
+           Everything that (re)spawns or gets re-stamped mid-LEVEL (death %, results,
+           congrats, rewind, press-to-start, countdown) sits under scrUIController.canvas;
+           the only styled game text NOT under it is the autoplay label. A full scene scan
+           here visibly hitched at start/death/retry on large maps (thousands of tile and
+           decoration texts), so a retry — which reloads scnGame — uses this scope instead.
+           Full sweeps stay reserved for menu scene loads. */
         internal static void ReapplyHud()
         {
             if (!Enabled || _tmpFont == null) return;
@@ -500,6 +529,8 @@ namespace Bismuth
             {
                 var uic = scrUIController.instance;
                 if (uic != null && uic.canvas != null) ApplyTo(uic.canvas.gameObject);
+                var auto = GameUiLayout.AutoplayTextObject();
+                if (auto != null) ApplyTo(auto);
             }
             catch { }
         }
@@ -912,8 +943,14 @@ namespace Bismuth
             /* Transform-level fixes apply to the original; the shadow child inherits them.
                CLS portal/world-name and Continue/LastLevel are fit-container text that
                ignore fontSize, so they're shrunk via the transform instead. */
-            if (InCls() && HasAncestor(t, "WorldNameCanvas"))
-                ScaleTransform(t.transform, ClsLabelScale, keepCenter: false);
+            // Wave tags fit via FitMode.Width (below); the transform downscale would double-shrink them.
+            if (InCls() && HasAncestor(t, "WorldNameCanvas") && !HasAncestor(t, "waveTag"))
+            {
+                // The chain-banner level sign ("레벨", under SignContainer) reads too small at
+                // the portal-label downscale — give it its own larger, center-kept scale.
+                bool sign = HasAncestor(t, "SignContainer");
+                ScaleTransform(t.transform, sign ? ClsSignScale : ClsLabelScale, keepCenter: sign);
+            }
             if (IsStatsText(t)) ApplyStatsScale(t);
             if (t.name == "LastLevel" && t.transform.parent != null && t.transform.parent.name == "Continue")
                 ScaleTransform(t.transform, 0.6f, keepCenter: false);
@@ -944,6 +981,13 @@ namespace Bismuth
                 fit = GameTextShadow.FitMode.Width;
                 fitShrink = splash ? 0.95f : GameTextShadow.DefaultFitShrink;
             }
+            // CLS fixed-size (non-bestFit) one-line text overflows its box with the wider font
+            // and crowds neighbours: wave tags ("웨이브 4"), the rail tile artist (LevelArtist,
+            // overflows into the "신규!" badge), and the detail artist (ArtistText, overflows
+            // into its media icons). Autosize them down to fit instead of plain no-wrap.
+            else if (InCls() && (HasAncestor(t, "waveTag")
+                     || t.gameObject.name == "LevelArtist" || t.gameObject.name == "ArtistText"))
+            { fit = GameTextShadow.FitMode.Width; fitShrink = 0.95f; }
             else { fit = GameTextShadow.FitMode.None; fitShrink = GameTextShadow.DefaultFitShrink; }
             // Guest-track labels bake an absolute <size=…> tag into their text that overrides
             // our scaling — strip it so the whole panel sizes consistently off our scale. For
@@ -951,7 +995,7 @@ namespace Bismuth
             // add line spacing so the label and the name beneath it aren't cramped.
             GameTextShadow.Attach(t).Configure(tmpFont, style, scale, fit, fitShrink,
                 stripSize: guest, boldLabelLines: guest && IsGuestLabelObject(t) && !bold,
-                lineSpacing: guest ? GuestLineSpacing : 0f);
+                lineSpacing: guest ? GuestLineSpacing : 0f, noWrap: IsClsNoWrap(t));
         }
 
         private static void ApplyTmp(TMP_Text t)
@@ -973,6 +1017,10 @@ namespace Bismuth
                 st.Font = t.font; // re-stamped since cached, see ApplyText
                 _origTmp[t] = st;
             }
+            // CLS "신규!" badges (TMP) must not wrap — set before the early-out below so it
+            // applies even when the font is already swapped.
+            if (IsClsNoWrap(t) && t.textWrappingMode != TextWrappingModes.NoWrap)
+                t.textWrappingMode = TextWrappingModes.NoWrap;
             bool bold = ShouldBold(t, t.text, (st.Style & FontStyles.Bold) != 0,
                 st.Font != null ? st.Font.name : null);
             bool explicitWeight = elem != null && elem.TmpFont != null;

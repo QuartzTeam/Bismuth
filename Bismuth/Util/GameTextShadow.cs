@@ -56,6 +56,8 @@ namespace Bismuth
         // Collapse newlines to spaces while mirroring — the level name keeps the speed-trial
         // multiplier ("…\n(1.1배)") inline on one line.
         private bool _collapseNewlines;
+        // Force no-wrap regardless of the original's wrap mode (CLS rail names/artist, etc.).
+        private bool _noWrap;
         private bool _configDirty;
 
         // Last-mirrored values — only write to TMP on change so it doesn't rebuild its
@@ -64,7 +66,6 @@ namespace Bismuth
         private Color _lastColor;
         private float _lastSize = float.NaN;
         private TextAlignmentOptions _lastAlign = (TextAlignmentOptions)(-1);
-        private bool _lastWrap;
         private bool _lastRich;
         private bool _lastEnabled = true;
 
@@ -107,7 +108,7 @@ namespace Bismuth
         // fitWidth = keep on one line and shrink to fit the rect (title/credits).
         internal void Configure(TMP_FontAsset font, FontStyles style, float scale, FitMode fit = FitMode.None,
             float fitShrink = DefaultFitShrink, bool stripSize = false, bool boldLabelLines = false,
-            float lineSpacing = 0f, bool collapseNewlines = false)
+            float lineSpacing = 0f, bool collapseNewlines = false, bool noWrap = false)
         {
             _font = font;
             _style = style;
@@ -118,6 +119,7 @@ namespace Bismuth
             _boldLabelLines = boldLabelLines;
             _lineSpacing = lineSpacing;
             _collapseNewlines = collapseNewlines;
+            _noWrap = noWrap;
             _configDirty = true;
         }
 
@@ -189,12 +191,12 @@ namespace Bismuth
             }
             else
             {
-                bool wrap = _src.horizontalOverflow == HorizontalWrapMode.Wrap;
-                if (wrap != _lastWrap)
-                {
-                    _tmp.textWrappingMode = wrap ? TextWrappingModes.Normal : TextWrappingModes.NoWrap;
-                    _lastWrap = wrap;
-                }
+                // Compare against the TMP's ACTUAL mode, not a cached flag: the TMP defaults to
+                // wrap-on, so a cached _lastWrap (starts false) made "want NoWrap" a no-op
+                // (false != false) and the text kept wrapping.
+                var wantWrap = (!_noWrap && _src.horizontalOverflow == HorizontalWrapMode.Wrap)
+                    ? TextWrappingModes.Normal : TextWrappingModes.NoWrap;
+                if (_tmp.textWrappingMode != wantWrap) _tmp.textWrappingMode = wantWrap;
 
                 // Best-fit originals auto-size between bounds (TMP's analog); others use fontSize.
                 if (_src.resizeTextForBestFit)

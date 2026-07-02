@@ -468,7 +468,7 @@ namespace Bismuth
             new GameUiOverride { Key = "percent",      OffY = -35f,  Scale = 0.3f },
             new GameUiOverride { Key = "results",      OffY = -30f,  Scale = 0.8f },
             new GameUiOverride { Key = "strictclear",  OffY = 300f,  Scale = 0.4f },
-            new GameUiOverride { Key = "autoplay",     OffX = 650f, OffY = -750f, Scale = 1f },
+            new GameUiOverride { Key = "autoplay",     OffX = 650f, OffY = -750f, Scale = 1f, Align = (int)TextAlign.Center },
         };
 
         // Curated per-element game-text weights, baked alongside the layout.

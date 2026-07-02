@@ -187,7 +187,7 @@ namespace Bismuth
             go.transform.SetParent(canvasGo.transform, false);
 
             var rect = (RectTransform)go.transform;
-            rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 0.85f);
+            rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 0.82f);
             rect.pivot = new Vector2(0.5f, 0.5f);
             rect.anchoredPosition = new Vector2(0f, 0f);
 

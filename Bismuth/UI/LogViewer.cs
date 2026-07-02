@@ -1,5 +1,6 @@
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 namespace Bismuth.UI
@@ -11,6 +12,7 @@ namespace Bismuth.UI
         private static GameObject _canvasGo;
         private static TextMeshProUGUI _text;
         private static ScrollRect _scroll;
+        private static string[] _lines = System.Array.Empty<string>();
 
         public static void Show()
         {
@@ -76,8 +78,13 @@ namespace Bismuth.UI
             cr.offsetMax = new Vector2(-8f, 0f);
 
             _text = UIBuilder.Tmp(contentGo, "", 13, TextAnchor.UpperLeft, Theme.Text, wrap: true);
+            _text.richText = true;          // line-number <link> + <noparse> content
+            _text.raycastTarget = true;     // receive clicks for copy-on-line-number
             var csf = contentGo.AddComponent<ContentSizeFitter>();
             csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            var copier = contentGo.AddComponent<LogLineCopier>();
+            copier.Text = _text;
+            copier.LineForLink = i => (i >= 0 && i < _lines.Length) ? _lines[i] : null;
 
             _scroll = panel.AddComponent<ScrollRect>();
             _scroll.viewport = vr;
@@ -106,15 +113,22 @@ namespace Bismuth.UI
             if (_text == null) return;
             string raw = BismuthLog.ReadTail();
             // [dbg] lines show only in debug mode (Misc → Debug mode).
-            if (!(MainClass.Settings != null && MainClass.Settings.DebugMode))
-            {
-                var sb = new System.Text.StringBuilder(raw.Length);
-                foreach (var line in raw.Split('\n'))
-                    if (!line.Contains("[dbg]"))
-                        sb.Append(line).Append('\n');
-                raw = sb.ToString();
-            }
-            _text.text = raw;
+            bool dbg = MainClass.Settings != null && MainClass.Settings.DebugMode;
+            var lines = new System.Collections.Generic.List<string>();
+            foreach (var line in raw.Split('\n'))
+                if (dbg || !line.Contains("[dbg]")) lines.Add(line);
+            // Drop the trailing empty line from the final newline.
+            if (lines.Count > 0 && lines[lines.Count - 1].Length == 0) lines.RemoveAt(lines.Count - 1);
+            _lines = lines.ToArray();
+
+            // Each line: a clickable <link> line number (copies the line) + the raw text in
+            // <noparse> so the log's own <color>/<size> tags show literally instead of rendering.
+            var sb = new System.Text.StringBuilder(raw.Length + _lines.Length * 28);
+            for (int i = 0; i < _lines.Length; i++)
+                sb.Append("<link=\"").Append(i).Append("\"><color=#6E7681>")
+                  .Append((i + 1).ToString().PadLeft(4)).Append("</color></link>  <noparse>")
+                  .Append(_lines[i]).Append("</noparse>\n");
+            _text.text = sb.ToString();
             Canvas.ForceUpdateCanvases();
             if (_scroll != null) _scroll.verticalNormalizedPosition = 0f; // newest at bottom
         }
@@ -125,6 +139,25 @@ namespace Bismuth.UI
             _canvasGo = null;
             _text = null;
             _scroll = null;
+        }
+    }
+
+    // Click a line-number <link> in the log text → copy that line to the system clipboard.
+    internal class LogLineCopier : MonoBehaviour, IPointerClickHandler
+    {
+        internal TMP_Text Text;
+        internal System.Func<int, string> LineForLink;
+
+        public void OnPointerClick(PointerEventData e)
+        {
+            if (Text == null || LineForLink == null) return;
+            int li = TMP_TextUtilities.FindIntersectingLink(Text, e.position, e.pressEventCamera);
+            if (li < 0) return;
+            if (int.TryParse(Text.textInfo.linkInfo[li].GetLinkID(), out int idx))
+            {
+                string line = LineForLink(idx);
+                if (line != null) GUIUtility.systemCopyBuffer = line;
+            }
         }
     }
 }

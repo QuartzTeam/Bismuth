@@ -89,6 +89,14 @@ namespace Bismuth
             return _autoplay != null ? _autoplay.transform as RectTransform : null;
         }
 
+        /* The autoplay/status label for the font sweep to style. It's world-space (not under
+           the HUD canvas), so the scoped gameplay sweep covers it explicitly. */
+        internal static GameObject AutoplayTextObject()
+        {
+            var rt = AutoplayText();
+            return rt != null ? rt.gameObject : null;
+        }
+
         /* Which HUD element (by target key) a text component belongs to, or null.
            Used by GameFontApplier's per-element weight overrides. Target rects are
            resolved once per frame, since a full sweep asks for every text. */
@@ -163,6 +171,7 @@ namespace Bismuth
             o.OffX = d.OffX;
             o.OffY = d.OffY;
             o.Scale = d.Scale;
+            o.Align = d.Align; // reset alignment too (autoplay default is Center, not inherit)
             o.Hidden = false; // reset un-hides
             ApplyOne(key);
         }
@@ -228,13 +237,18 @@ namespace Bismuth
            before we re-measure the center. Only relevant while an override is active. */
         private static string _autoplayText;
         private static int _autoplayReapplyFrame = -1;
+        // True only while running the deferred autoplay re-apply, so that apply doesn't
+        // schedule yet another (which would loop every frame).
+        private static bool _inAutoplayReapply;
 
         private static void TickAutoplayContent()
         {
             if (_autoplayReapplyFrame > 0 && Time.frameCount >= _autoplayReapplyFrame)
             {
                 _autoplayReapplyFrame = -1;
+                _inAutoplayReapply = true;
                 ApplyOne("autoplay");
+                _inAutoplayReapply = false;
             }
 
             if (GetOverride("autoplay", create: false) == null) return;
@@ -298,6 +312,13 @@ namespace Bismuth
             w.localScale = new Vector3(sc, sc, 1f);
 
             ApplyVisibility(w, o.Hidden);
+
+            /* The autoplay label is content-sized and freshly (re)wrapped, so its rect and the
+               wrapper's stretch rect don't settle until the next layout pass — the center we
+               just measured can be stale, landing it off (the "toggle align + recenter" bug).
+               Re-apply once next frame on settled geometry. Skip while we ARE that re-apply. */
+            if (t.Key == "autoplay" && !_inAutoplayReapply)
+                _autoplayReapplyFrame = Time.frameCount + 1;
         }
 
         /* Hide/show via a CanvasGroup on the (persistent) wrapper. Because the wrapper outlives
@@ -326,9 +347,18 @@ namespace Bismuth
             public TextAnchor Orig;
             public HorizontalWrapMode OrigWrap;
             public float OrigPivotX;
+            public float OrigAnchorX;
+            public int PosAlign;   // alignment whose anchoredPosition we've frozen (-2 = none)
         }
         private static readonly Dictionary<string, AlignState> _alignOrig =
             new Dictionary<string, AlignState>();
+
+        /* Effective alignment when the override leaves Align at inherit (-1). The
+           autoplay/status label sits left-aligned in-game, but Bismuth's default for it
+           is Center (which is also what the editor shows), so resolve -1 → Center for it.
+           Everything else genuinely inherits its original alignment. */
+        private static int DefaultAlign(string key) =>
+            key == "autoplay" ? (int)TextAlign.Center : -1;
 
         private static void ApplyAlign(string key, RectTransform rt, int align)
         {
@@ -341,44 +371,53 @@ namespace Bismuth
             {
                 st = new AlignState
                 {
-                    Txt = txt, Orig = txt.alignment,
-                    OrigWrap = txt.horizontalOverflow, OrigPivotX = trt.pivot.x,
+                    Txt = txt, Orig = txt.alignment, OrigWrap = txt.horizontalOverflow,
+                    OrigPivotX = trt.pivot.x, OrigAnchorX = trt.anchoredPosition.x, PosAlign = -2,
                 };
                 _alignOrig[key] = st;
             }
 
-            if (align < 0) // inherit: restore the captured originals
+            if (align < 0) align = DefaultAlign(key); // unset → per-key default
+
+            if (align < 0) // inherit: restore the captured originals exactly
             {
                 txt.alignment = st.Orig;
                 txt.horizontalOverflow = st.OrigWrap;
-                SetPivotX(trt, st.OrigPivotX);
+                trt.pivot = new Vector2(st.OrigPivotX, trt.pivot.y);
+                trt.anchoredPosition = new Vector2(st.OrigAnchorX, trt.anchoredPosition.y);
+                st.PosAlign = -2; _alignOrig[key] = st; // re-freeze if re-aligned later
             }
             else
             {
                 /* The label's rect is sized to its content, so Text.alignment alone can't move
                    it — the element's pivot.x decides which edge stays put as the text grows
-                   (Left=0, Center=0.5, Right=1), exactly like the attempts block. Overflow keeps
-                   it on one line so content changes grow about that pivot, not wrap off-center. */
+                   (Left=0, Center=0.5, Right=1). Overflow keeps it on one line so content changes
+                   grow about that pivot, not wrap off-center. */
                 float pivotX = align == (int)TextAlign.Left ? 0f
                              : align == (int)TextAlign.Right ? 1f : 0.5f;
-                SetPivotX(trt, pivotX);
                 txt.alignment = MapAlign(align, st.Orig);
                 txt.horizontalOverflow = HorizontalWrapMode.Overflow;
+                LayoutRebuilder.ForceRebuildLayoutImmediate(trt); // settle width
+                trt.pivot = new Vector2(pivotX, trt.pivot.y);
+                /* Compensate the pivot move so the label doesn't jump when its alignment first
+                   changes — but only ONCE, at a valid width, then freeze. After that, leave
+                   anchoredPosition alone so content changes (e.g. "+ pause" appended) grow the
+                   centered label symmetrically about a fixed point instead of pinning one edge
+                   and drifting. Re-measuring every apply (with a content-sized rect) is exactly
+                   what made the label slide as its text changed. */
+                if (st.PosAlign != align && trt.rect.width > 1f)
+                {
+                    trt.anchoredPosition = new Vector2(
+                        st.OrigAnchorX + (pivotX - st.OrigPivotX) * trt.rect.width, trt.anchoredPosition.y);
+                    st.PosAlign = align; _alignOrig[key] = st;
+                }
             }
 
-            /* Settle the content-sized rect NOW. Changing pivot/alignment/overflow leaves the
-               rect's size dirty until the next layout pass, so ApplyOne's WorldCenter measure
-               (called right after) would read the stale geometry and land a "centered" element
-               off — fixable only by toggling align + re-centering. Forcing the rebuild here
-               makes centering correct on the first apply. */
+            /* Settle the content-sized rect NOW so ApplyOne's WorldCenter measure (called right
+               after) reads current geometry, not stale — otherwise a "centered" element lands
+               off until align is toggled and re-centered. */
             LayoutRebuilder.ForceRebuildLayoutImmediate(trt);
             if (rt != trt) LayoutRebuilder.ForceRebuildLayoutImmediate(rt);
-        }
-
-        private static void SetPivotX(RectTransform rt, float x)
-        {
-            if (Mathf.Approximately(rt.pivot.x, x)) return;
-            rt.pivot = new Vector2(x, rt.pivot.y);
         }
 
         // Map a horizontal Left/Center/Right (0/1/2) onto TextAnchor, keeping the
@@ -470,9 +509,11 @@ namespace Bismuth
             foreach (var kv in _alignOrig)
                 if (kv.Value.Txt != null)
                 {
+                    var trt = kv.Value.Txt.rectTransform;
                     kv.Value.Txt.alignment = kv.Value.Orig;
                     kv.Value.Txt.horizontalOverflow = kv.Value.OrigWrap;
-                    SetPivotX(kv.Value.Txt.rectTransform, kv.Value.OrigPivotX);
+                    trt.pivot = new Vector2(kv.Value.OrigPivotX, trt.pivot.y);
+                    trt.anchoredPosition = new Vector2(kv.Value.OrigAnchorX, trt.anchoredPosition.y);
                 }
             _alignOrig.Clear();
             RestoreErrorMeter();

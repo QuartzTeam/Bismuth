@@ -736,7 +736,8 @@ namespace Bismuth.UI
             string label,
             IList<string> options,
             int currentIndex,
-            Action<int> onChange)
+            Action<int> onChange,
+            IList<TMP_FontAsset> optionFonts = null)
         {
             var container = Rect("Dropdown_" + label, parent);
             var clVlg = container.AddComponent<VerticalLayoutGroup>();
@@ -769,6 +770,13 @@ namespace Bismuth.UI
             valRect.offsetMin = new Vector2(150f, 0);
             valRect.offsetMax = new Vector2(-8f, 0);
             var val = Tmp(valGo, (options.Count > 0 ? options[idx] : "") + "  ▾", (int)LabelFontSize, TextAnchor.MiddleRight, Theme.Text);
+            // Render the selected value (and each option below) in its own font, for a preview.
+            void SetValFont()
+            {
+                if (optionFonts != null && idx >= 0 && idx < optionFonts.Count && optionFonts[idx] != null)
+                    val.font = optionFonts[idx];
+            }
+            SetValFont();
 
             var listGo = Rect("Options", container.transform);
             var lVlg = listGo.AddComponent<VerticalLayoutGroup>();
@@ -788,6 +796,7 @@ namespace Bismuth.UI
                 open = false;
                 listGo.SetActive(false);
                 val.text = (options.Count > 0 ? options[idx] : "") + "  ▾";
+                SetValFont();
             };
 
             for (int i = 0; i < options.Count; i++)
@@ -804,6 +813,8 @@ namespace Bismuth.UI
                 var t = labelChild(opt.transform, (oi == idx ? "● " : "   ") + options[oi],
                     (int)LabelFontSize, TextAnchor.MiddleLeft, oi == idx ? Theme.Text : Theme.TextMuted);
                 t.rectTransform.offsetMin = new Vector2(20f, 0);
+                if (optionFonts != null && oi < optionFonts.Count && optionFonts[oi] != null)
+                    t.font = optionFonts[oi];
                 optTexts[oi] = t;
 
                 ClickHandler.Attach(opt, () =>
@@ -826,6 +837,7 @@ namespace Bismuth.UI
                 open = !open;
                 listGo.SetActive(open);
                 val.text = (options.Count > 0 ? options[idx] : "") + (open ? "  ▴" : "  ▾");
+                SetValFont();
             });
 
             return container;
