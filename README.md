@@ -22,7 +22,8 @@
 Tested Environments:
 
 - macOS 26.5, ADOFAI v3.2.0
-- Arch Linux, kernel 7.0, ADOFAI v3.1.2
+- Arch Linux, kernel 7.0, ADOFAI v3.1.2 (latest build not functional)
+- Windows 11, ADOFAI v3.2.0
 
 ## Install
 
