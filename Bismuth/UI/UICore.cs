@@ -8,6 +8,88 @@ using UnityModManagerNet;
 
 namespace Bismuth.UI
 {
+    // Searchable index of settings controls, harvested automatically as tabs build their
+    // ROOT views (widget factories call Register with the ambient tab context; subpage
+    // builds are suspended — their entry points are the indexed NavRows/cards, whose
+    // captured onOpen navigates into them).
+    internal static class SettingsSearch
+    {
+        internal class Entry
+        {
+            public string Label;
+            public string Tab;
+            public int TabIndex;
+            public Action Open;      // optional subpage opener (NavRow/NavCard onOpen)
+            public string[] Keywords; // comma-separated phrases at registration — subpage contents
+        }
+
+        internal class Result
+        {
+            public Entry E;
+            public string Via; // matched keyword phrase, null when the label itself matched
+        }
+
+        private static readonly List<Entry> _entries = new List<Entry>();
+        private static string _tab;
+        private static int _tabIndex = -1;
+        private static int _suspend;
+
+        internal static void Clear() { _entries.Clear(); _tab = null; _tabIndex = -1; _suspend = 0; }
+        internal static void BeginTab(string name, int idx) { _tab = name; _tabIndex = idx; }
+        internal static void EndTab() { _tab = null; _tabIndex = -1; }
+        internal static void Suspend(bool on) { _suspend += on ? 1 : -1; }
+
+        internal static void Register(string label, Action open = null, string keywords = null)
+        {
+            // <2 chars filters color-channel sliders (R/G/B/A) and other non-entries.
+            if (_suspend > 0 || _tabIndex < 0 || string.IsNullOrEmpty(label) || label.Trim().Length < 2)
+                return;
+            string[] kw = null;
+            if (!string.IsNullOrEmpty(keywords))
+            {
+                kw = keywords.Split(',');
+                for (int i = 0; i < kw.Length; i++) kw[i] = kw[i].Trim();
+            }
+            _entries.Add(new Entry { Label = label.Trim(), Tab = _tab, TabIndex = _tabIndex, Open = open, Keywords = kw });
+        }
+
+        internal static List<Result> Query(string q, int max)
+        {
+            var result = new List<Result>();
+            if (string.IsNullOrWhiteSpace(q)) return result;
+            q = q.Trim();
+            foreach (var e in _entries) // label prefix matches rank first
+                if (e.Label.StartsWith(q, StringComparison.OrdinalIgnoreCase))
+                    AddUnique(result, e, null, max);
+            foreach (var e in _entries)
+            {
+                if (result.Count >= max) break;
+                if (e.Label.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0)
+                    AddUnique(result, e, null, max);
+            }
+            foreach (var e in _entries) // keyword matches rank last, shown with the hit
+            {
+                if (result.Count >= max) break;
+                if (e.Keywords == null) continue;
+                foreach (var k in e.Keywords)
+                    if (k.Length > 0 && k.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        AddUnique(result, e, k, max);
+                        break;
+                    }
+            }
+            return result;
+        }
+
+        private static void AddUnique(List<Result> list, Entry e, string via, int max)
+        {
+            if (list.Count >= max) return;
+            foreach (var x in list)
+                if (x.E.TabIndex == e.TabIndex && x.E.Label == e.Label) return;
+            list.Add(new Result { E = e, Via = via });
+        }
+    }
+
     internal static class UICore
     {
         private const string ToggleHint = "Ctrl + B";
@@ -231,6 +313,120 @@ namespace Bismuth.UI
         private static RectTransform _railRect;
         private static RectTransform _pageHostRect;
 
+        // ── Settings search (titlebar) ─────────────────────────────────────
+
+        private static TMP_InputField _searchInput;
+        private static RectTransform _searchBox;
+        private static GameObject _searchPopup;
+
+        private static void BuildSearchBar(GameObject bar)
+        {
+            var box = UIBuilder.Rect("Search", bar.transform);
+            _searchBox = (RectTransform)box.transform;
+            _searchBox.anchorMin = _searchBox.anchorMax = new Vector2(1f, 0.5f);
+            _searchBox.pivot = new Vector2(1f, 0.5f);
+            _searchBox.anchoredPosition = new Vector2(-52f, 0f);
+            _searchBox.sizeDelta = new Vector2(220f, 24f);
+            var bg = box.AddComponent<RoundedRectGraphic>();
+            bg.Radius = 4f;
+            bg.AAFringe = 0.5f;
+            bg.color = new Color(1f, 1f, 1f, 0.06f);
+            bg.raycastTarget = true;
+
+            var txtGo = UIBuilder.Rect("Text", box.transform);
+            var txtRect = (RectTransform)txtGo.transform;
+            txtRect.anchorMin = Vector2.zero;
+            txtRect.anchorMax = Vector2.one;
+            txtRect.offsetMin = new Vector2(8f, 0);
+            txtRect.offsetMax = new Vector2(-8f, 0);
+            var txt = UIBuilder.Tmp(txtGo, "", 13, TextAnchor.MiddleLeft, Theme.Text);
+            txt.richText = false;
+
+            var phGo = UIBuilder.Rect("Placeholder", box.transform);
+            var phRect = (RectTransform)phGo.transform;
+            phRect.anchorMin = Vector2.zero;
+            phRect.anchorMax = Vector2.one;
+            phRect.offsetMin = new Vector2(8f, 0);
+            phRect.offsetMax = new Vector2(-8f, 0);
+            var ph = UIBuilder.Tmp(phGo, "Search settings...", 13, TextAnchor.MiddleLeft, Theme.TextMuted);
+
+            _searchInput = UIBuilder.BuildInputField(box, txt);
+            _searchInput.placeholder = ph;
+            _searchInput.onValueChanged.AddListener(RefreshSearchResults);
+            _searchInput.onSelect.AddListener(_ => RefreshSearchResults(_searchInput.text));
+            // Deselect fires on the same pointer-down that may be selecting a result row,
+            // so hide with a grace window; result rows navigate on pointer-down.
+            _searchInput.onDeselect.AddListener(_ =>
+            {
+                if (_searchPopup == null) return;
+                var d = _searchPopup.GetComponent<DeferredDestroy>() ?? _searchPopup.AddComponent<DeferredDestroy>();
+                d.Frames = 8;
+            });
+        }
+
+        private static void HideSearchPopup()
+        {
+            if (_searchPopup == null) return;
+            UnityEngine.Object.Destroy(_searchPopup);
+            _searchPopup = null;
+        }
+
+        private static void RefreshSearchResults(string q)
+        {
+            HideSearchPopup();
+            var results = SettingsSearch.Query(q, 9);
+            if (results.Count == 0) return;
+
+            const float rowH = 26f;
+            _searchPopup = UIBuilder.Rect("SearchResults", _canvasGo.transform);
+            var pRect = (RectTransform)_searchPopup.transform;
+            pRect.pivot = new Vector2(1f, 1f);
+            pRect.sizeDelta = new Vector2(340f, results.Count * rowH + 10f);
+            UIBuilder.SolidImage(_searchPopup, Theme.Panel);
+            UIBuilder.AddBorder(_searchPopup, Theme.PanelBorder, 1f);
+
+            var corners = new Vector3[4];
+            _searchBox.GetWorldCorners(corners);
+            float sf = _canvas != null ? _canvas.scaleFactor : 1f;
+            _searchPopup.transform.position = corners[3] + new Vector3(0f, -4f * sf, 0f); // below bottom-right
+
+            var list = UIBuilder.VGroup(_searchPopup.transform, "List", 0f);
+            var lRect = (RectTransform)list.transform;
+            lRect.anchorMin = Vector2.zero;
+            lRect.anchorMax = Vector2.one;
+            lRect.offsetMin = new Vector2(1f, 1f);
+            lRect.offsetMax = new Vector2(-1f, -1f);
+            list.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(0, 0, 4, 4);
+
+            foreach (var r in results)
+            {
+                var entry = r.E;
+                var row = UIBuilder.Rect("R", list.transform);
+                var le = row.AddComponent<LayoutElement>();
+                le.preferredHeight = rowH;
+                le.minHeight = rowH;
+                var rbg = UIBuilder.SolidImage(row, new Color(0, 0, 0, 0));
+                rbg.raycastTarget = true;
+                var hh = row.AddComponent<HoverHandler>();
+                hh.OnEnter = () => rbg.color = Theme.RowBgHover;
+                hh.OnExit = () => rbg.color = new Color(0, 0, 0, 0);
+
+                string text = entry.Tab + "  ›  " + entry.Label;
+                if (r.Via != null) text += "   <color=#94949E>· " + r.Via + "</color>";
+                var lbl = UIBuilder.Label(row.transform, text, 13, TextAnchor.MiddleLeft, Theme.Text);
+                lbl.rectTransform.offsetMin = new Vector2(10f, 0);
+                lbl.rectTransform.offsetMax = new Vector2(-10f, 0);
+
+                var down = row.AddComponent<SearchRowDown>();
+                down.OnDown = () =>
+                {
+                    _tabs?.OpenSearchResult(entry.TabIndex, entry.Open);
+                    if (_searchInput != null) _searchInput.SetTextWithoutNotify("");
+                    HideSearchPopup();
+                };
+            }
+        }
+
         private static void BuildTitleBar()
         {
             const float titleH = 36f;
@@ -263,7 +459,7 @@ namespace Bismuth.UI
             tr.anchorMin = new Vector2(0, 0);
             tr.anchorMax = new Vector2(1, 1);
             tr.offsetMin = new Vector2(12f, 0f);
-            tr.offsetMax = new Vector2(-32f, 0f);
+            tr.offsetMax = new Vector2(-280f, 0f); // clear of the search box + close button
             var title = titleGo.AddComponent<TextMeshProUGUI>();
             title.text = "Bismuth";
             title.font = Theme.TmpFont;
@@ -275,20 +471,23 @@ namespace Bismuth.UI
             title.overflowMode = TextOverflowModes.Overflow;
             title.raycastTarget = false;
 
-            // Close
+            BuildSearchBar(bar);
+
+            // Close — Windows-style: a full-height strip flush with the corner that
+            // floods solid red on hover.
             var close = UIBuilder.Rect("Close", bar.transform);
             var cr = (RectTransform)close.transform;
-            cr.anchorMin = cr.anchorMax = new Vector2(1f, 0.5f);
+            cr.anchorMin = new Vector2(1f, 0f);
+            cr.anchorMax = new Vector2(1f, 1f);
             cr.pivot = new Vector2(1f, 0.5f);
-            cr.anchoredPosition = new Vector2(-8f, 0f);
-            cr.sizeDelta = new Vector2(20f, 20f);
+            cr.anchoredPosition = Vector2.zero;
+            cr.sizeDelta = new Vector2(44f, 0f);
             var closeBg = UIBuilder.SolidImage(close, new Color(0, 0, 0, 0));
             closeBg.raycastTarget = true;
-            var x = UIBuilder.Label(close.transform, "×", 14, TextAnchor.MiddleCenter, Theme.Text);
-            x.fontStyle = FontStyles.Bold;
+            var x = UIBuilder.Label(close.transform, "×", 22, TextAnchor.MiddleCenter, Theme.Text);
             var closeHover = close.AddComponent<HoverHandler>();
-            closeHover.OnEnter = () => closeBg.color = Theme.CloseHover;
-            closeHover.OnExit = () => closeBg.color = new Color(0, 0, 0, 0);
+            closeHover.OnEnter = () => { closeBg.color = Theme.CloseHover; x.color = Color.white; };
+            closeHover.OnExit = () => { closeBg.color = new Color(0, 0, 0, 0); x.color = Theme.Text; };
             ClickHandler.Attach(close, () => Close());
         }
 
@@ -389,6 +588,8 @@ namespace Bismuth.UI
         {
             if (!_isOpen) return;
             _isOpen = false;
+            HideSearchPopup();
+            if (_searchInput != null) _searchInput.SetTextWithoutNotify("");
             // Save dimensions in canonical (scale=1.0) units so they restore across UI scale
             // changes. ApplyScale scales sizeDelta inversely, so ×_appliedScale undoes that.
             if (_panel != null && _settings != null)
@@ -397,6 +598,27 @@ namespace Bismuth.UI
                 _settings.UiPanelHeight = _panel.sizeDelta.y * _appliedScale;
             }
             _canvasGo.SetActive(false);
+        }
+    }
+
+    // Search result rows navigate on pointer DOWN — the same event deselects the search
+    // input, whose delayed-hide grace window this beats.
+    internal class SearchRowDown : MonoBehaviour, IPointerDownHandler
+    {
+        public Action OnDown;
+        public void OnPointerDown(PointerEventData e)
+        {
+            if (e.button == PointerEventData.InputButton.Left) OnDown?.Invoke();
+        }
+    }
+
+    // Destroys its GameObject after N frames — the search popup's deselect grace window.
+    internal class DeferredDestroy : MonoBehaviour
+    {
+        public int Frames;
+        private void Update()
+        {
+            if (--Frames <= 0) Destroy(gameObject);
         }
     }
 }

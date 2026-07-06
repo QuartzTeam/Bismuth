@@ -27,19 +27,21 @@ namespace Bismuth.UI
             public Image AccentStrip;
             public TextMeshProUGUI Label;
             public RectTransform Page;
+            public PageStack Stack;
         }
 
         public TabRail(RectTransform railParent, RectTransform pageParent)
         {
             _rail = railParent;
             _pageHost = pageParent;
+            SettingsSearch.Clear(); // fresh rail = fresh search index
             var bg = _rail.gameObject.AddComponent<Image>();
             bg.sprite = Theme.White;
             bg.color = Theme.TabRail;
             bg.raycastTarget = true;
         }
 
-        public int AddTab(string name, Action<RectTransform> buildPage)
+        public int AddTab(string name, Action<PageStack> buildPage)
         {
             int idx = _tabs.Count;
             var item = UIBuilder.Rect("Tab_" + name, _rail);
@@ -87,9 +89,11 @@ namespace Bismuth.UI
             pr.offsetMax = Vector2.zero;
             pageGo.SetActive(false);
 
-            BuildScrollableContent(pr, buildPage);
+            SettingsSearch.BeginTab(name, idx);
+            var stack = BuildScrollableContent(pr, buildPage);
+            SettingsSearch.EndTab();
 
-            var tab = new Tab { Name = name, Item = item, Bg = rowBg, AccentStrip = stripImg, Label = lbl, Page = pr };
+            var tab = new Tab { Name = name, Item = item, Bg = rowBg, AccentStrip = stripImg, Label = lbl, Page = pr, Stack = stack };
             _tabs.Add(tab);
 
             var hover = item.AddComponent<HoverHandler>();
@@ -101,8 +105,9 @@ namespace Bismuth.UI
             return idx;
         }
 
-        // Wraps the page builder's target Transform in a scrollable VerticalLayoutGroup container.
-        private void BuildScrollableContent(RectTransform page, Action<RectTransform> buildPage)
+        // Wraps the page builder's target Transform in a scrollable VerticalLayoutGroup
+        // container, with a PageStack for drill-in subpages.
+        private PageStack BuildScrollableContent(RectTransform page, Action<PageStack> buildPage)
         {
             // Scroll viewport
             var viewport = UIBuilder.Rect("Viewport", page);
@@ -156,7 +161,19 @@ namespace Bismuth.UI
             scroll.movementType = ScrollRect.MovementType.Clamped;
             scroll.scrollSensitivity = 24f;
 
-            buildPage(cr);
+            var stack = new PageStack(scroll, cr);
+            buildPage(stack);
+            return stack;
+        }
+
+        // Search navigation: land on the tab's root, then run the result's opener (a
+        // NavRow/NavCard onOpen closure that pushes its subpage).
+        public void OpenSearchResult(int idx, Action open)
+        {
+            if (idx < 0 || idx >= _tabs.Count) return;
+            Select(idx);
+            _tabs[idx].Stack?.PopToRoot();
+            open?.Invoke();
         }
 
         public void Select(int idx)
@@ -175,12 +192,14 @@ namespace Bismuth.UI
         }
     }
 
-    /* A tab label always reads its fixed name. The game runs a source-text localization
-       pass shortly after the panel builds that rewrites Bismuth's text by matching the
-       English value ("Misc" → "기타") — no component is attached (verified: the label's
-       whole parent chain is pure Bismuth), it just calls `.text =`. Bismuth owns these
-       labels, so restore the name whenever something changes it. The pass fires once, so
-       this is a one-time correction in practice, not a per-frame fight. */
+    /* A guarded label always reads its fixed text. The game runs a source-text
+       localization pass shortly after the panel builds that rewrites Bismuth's text by
+       matching the English value ("Misc" → "기타", "Difficulty" → "난이도") — no component
+       is attached (verified: the label's whole parent chain is pure Bismuth), it just
+       calls `.text =`. Bismuth owns these labels, so restore the text whenever something
+       changes it. The pass fires once, so this is a one-time correction in practice, not
+       a per-frame fight. Used by tab labels, cards, and NavRows (the feature-name
+       surfaces that collide with the game's localization keys). */
     internal class TabLabelGuard : MonoBehaviour
     {
         internal TextMeshProUGUI Label;
@@ -193,7 +212,7 @@ namespace Bismuth.UI
             if (!_logged)
             {
                 _logged = true;
-                BismuthLog.Debug($"[dbg] tab label '{Expected}' was rewritten to '{Label.text}' — restoring");
+                BismuthLog.Debug($"[dbg] label '{Expected}' was rewritten to '{Label.text}' — restoring");
             }
             Label.text = Expected;
         }

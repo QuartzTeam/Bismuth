@@ -394,5 +394,28 @@ namespace Bismuth
             }
         }
 
+        // CLS song-preview volume (Tweaks tab). The preview fades via a DOTween whose
+        // compiler-generated setter lambda writes audioSource.volume directly toward a
+        // hardcoded 1.0 — rescaling every write caps the whole fade envelope, so the
+        // steady preview plays at the configured volume.
+        [HarmonyPatch]
+        private static class ClsPreviewVolumePatch
+        {
+            static System.Reflection.MethodBase TargetMethod()
+            {
+                var t = AccessTools.TypeByName("PreviewSongPlayer");
+                return t != null ? AccessTools.Method(t, "<FadePreview>b__13_1") : null;
+            }
+
+            public static void Postfix(PreviewSongPlayer __instance, float x)
+            {
+                var s = MainClass.Settings;
+                if (s == null || __instance.audioSource == null) return;
+                float v = Mathf.Clamp01(s.ClsPreviewVolume);
+                if (v >= 0.999f) return;
+                __instance.audioSource.volume = x * v;
+            }
+        }
+
     }
 }

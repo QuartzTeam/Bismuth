@@ -7,8 +7,9 @@ namespace Bismuth.UI.Pages
 {
     internal static class PageInput
     {
-        public static void Build(RectTransform content)
+        public static void Build(PageStack stack)
         {
+            var content = stack.Root;
             var s = UICore.Settings;
             var notify = UICore.OnSettingsChanged;
 
@@ -307,6 +308,8 @@ namespace Bismuth.UI.Pages
             return list.ToArray();
         }
 
+        private static readonly HashSet<KeyCode> _asyncDown = new HashSet<KeyCode>();
+
         private void Update()
         {
             if (!Active || OnKey == null) return;
@@ -315,10 +318,14 @@ namespace Bismuth.UI.Pages
             KeyLimiter.RawReadExempt = true;
             try
             {
+                // Legacy polling is blind on some platforms (Proton/X11) while the game's
+                // async press list keeps working — consult both.
+                _asyncDown.Clear();
+                KeyLimiter.CollectStateKeys(KeyLimiter.StateWentDown, _asyncDown);
                 for (int i = 0; i < Watched.Length; i++)
                 {
                     var k = Watched[i];
-                    if (Input.GetKeyDown(k))
+                    if (Input.GetKeyDown(k) || _asyncDown.Contains(k))
                     {
                         OnKey(k);
                         return;

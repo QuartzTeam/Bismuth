@@ -32,12 +32,30 @@ namespace Bismuth
             }
         }
 
+        // Async press lists queried once per frame (legacy Input polling is blind on
+        // Proton/X11 while SkyHook keeps reporting). _heldKeys dedupes the two sources:
+        // async events can lead legacy by a frame, and without it one press would fire
+        // twice on platforms where both work.
+        private static readonly HashSet<KeyCode> _asyncDown   = new HashSet<KeyCode>();
+        private static readonly HashSet<KeyCode> _asyncUp     = new HashSet<KeyCode>();
+        private static readonly HashSet<KeyCode> _asyncHeld   = new HashSet<KeyCode>();
+        private readonly HashSet<KeyCode> _heldKeys = new HashSet<KeyCode>();
+        private static readonly List<KeyCode> _stuckScratch = new List<KeyCode>();
+
         private void PollKeys(float now)
         {
+            _asyncDown.Clear();
+            _asyncUp.Clear();
+            KeyLimiter.CollectStateKeys(KeyLimiter.StateWentDown, _asyncDown);
+            KeyLimiter.CollectStateKeys(KeyLimiter.StateWentUp, _asyncUp);
+
             foreach (var key in _keys)
             {
-                bool down = Input.GetKeyDown(key);
-                bool up   = Input.GetKeyUp(key);
+                bool held = _heldKeys.Contains(key);
+                bool down = (Input.GetKeyDown(key) || _asyncDown.Contains(key)) && !held;
+                bool up   = (Input.GetKeyUp(key)   || _asyncUp.Contains(key))   && held;
+                if (down) _heldKeys.Add(key);
+                if (up)   _heldKeys.Remove(key);
                 if (!down && !up) continue;
 
                 if (down)
@@ -78,13 +96,41 @@ namespace Bismuth
 
                     if (_rainEnabled.Contains(key))
                     {
+                        // Resolved at spawn so live accent edits color the next drop
+                        // without a rebuild.
                         Color rc = _rainColors.TryGetValue(key, out var kvc) ? kvc.ToColor() : Color.white;
-                        StartRainColumn(key, rc);
+                        StartRainColumn(key, ThemeRain(key, rc));
                     }
                 }
 
                 if (up)
                 {
+                    if (_keyCells.TryGetValue(key, out var cells))
+                        foreach (var c in cells)
+                        {
+                            if (c?.Preset == null) continue;
+                            if (c.Bg    != null) { c.Bg.color = c.Preset.BgIdle.ToColor(); c.Bg.BorderColor = c.Preset.BorderIdle.ToColor(); }
+                            if (c.Name  != null) c.Name.color  = c.Preset.TxtIdle.ToColor();
+                            if (c.Count != null) c.Count.color = c.Preset.CountIdle.ToColor();
+                        }
+                    if (_rainEnabled.Contains(key)) StopRainColumn(key);
+                }
+            }
+
+            // Stuck-release guard: a key we consider held but that BOTH sources report
+            // released (missed WentUp) gets the release path forced, else its future
+            // presses would be swallowed by the held check forever.
+            if (_heldKeys.Count > 0)
+            {
+                _asyncHeld.Clear();
+                KeyLimiter.CollectStateKeys(KeyLimiter.StateIsDown, _asyncHeld);
+                _stuckScratch.Clear();
+                foreach (var key in _heldKeys)
+                    if (!Input.GetKey(key) && !_asyncHeld.Contains(key) && !_asyncDown.Contains(key))
+                        _stuckScratch.Add(key);
+                foreach (var key in _stuckScratch)
+                {
+                    _heldKeys.Remove(key);
                     if (_keyCells.TryGetValue(key, out var cells))
                         foreach (var c in cells)
                         {
@@ -204,6 +250,20 @@ namespace Bismuth
                     }
                 }
             }
+        }
+
+        // Theme mode dictates rain outright: top row plain white, lower rows accent.
+        // Stored row colors are ignored while it's on — the factory presets ship a stock
+        // blue RainColor, so "only recolor defaults" left everything blue. Ghost rain
+        // keeps its own color (custom or the yellow default).
+        private Color ThemeRain(KeyCode key, Color c)
+        {
+            var s = MainClass.Settings;
+            if (s == null || !s.AccentAsTheme) return c;
+            if (_ghostKeys.Contains(key)) return c;
+            return _lowerRowRainKeys.Contains(key)
+                ? new Color(s.UiAccentR, s.UiAccentG, s.UiAccentB, c.a)
+                : new Color(1f, 1f, 1f, c.a);
         }
 
         private void StartRainColumn(KeyCode key, Color color)

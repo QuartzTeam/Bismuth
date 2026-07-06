@@ -76,6 +76,18 @@ namespace Bismuth
         private GameObject tileBpmRow;
         private TextMeshProUGUI tileBpmLabel;
         private TextMeshProUGUI tileBpmValue;
+        private GameObject kpsRow;
+        private TextMeshProUGUI kpsLabel;
+        private TextMeshProUGUI kpsValue;
+        private GameObject songDurRow;
+        private TextMeshProUGUI songDurLabel;
+        private TextMeshProUGUI songDurValue;
+        private GameObject levelDurRow;
+        private TextMeshProUGUI levelDurLabel;
+        private TextMeshProUGUI levelDurValue;
+        private GameObject bestRow;
+        private TextMeshProUGUI bestLabel;
+        private TextMeshProUGUI bestValue;
         private GameObject timingScaleRow;
         private TextMeshProUGUI timingScaleLabel;
         private TextMeshProUGUI timingScaleValue;
@@ -89,6 +101,10 @@ namespace Bismuth
         private TmpShadow _comboLabelShadow;
         private GameObject fpsContainer;
         private TextMeshProUGUI fpsText;
+        private GameObject progressBarGo;
+        private RectTransform progressBarFill;
+        private UnityEngine.UI.Image progressBarFillImg;
+        private float _lastBarT = -1f;
 
         private float _fpsAccum;
         private int _fpsFrames;
@@ -122,9 +138,24 @@ namespace Bismuth
         private float _lastProgressT = -1f;
         private float _lastBpm = -1f;
         private float _lastTileBpmVal = -1f;
+        private float _lastKpsVal = -1f;
         private float _lastTimingScale = -1f;
         private int _lastComboDisplay = -1;
         private int _lastPrecision = -1;
+        // Duration rows show elapsed/total; totals computed lazily per attempt, elapsed
+        // text rebuilt only when the displayed second ticks.
+        private float _songDurTotal = -1f;
+        private string _songDurTotalText;
+        private int _lastSongElapsed = -1;
+        private float _levelDurTotal = -1f;
+        private string _levelDurTotalText;
+        private int _lastLevelElapsed = -1;
+
+        // Best-% tracking: quantized furthest progress during full (from-0%) attempts.
+        // Loaded per level, persisted at attempt boundaries when dirty.
+        private float _bestPct;
+        private bool _isFullAttempt;
+        private bool _bestDirty;
 
         public static Overlay Create()
         {

@@ -222,6 +222,7 @@ namespace Bismuth
                         CreateKeyCell(panel, kc, center, slot, cellH, preset);
                         _rainX[kc] = cx;
                         _rainRowIndex[kc] = globalR;
+                        _lowerRowRainKeys.Add(kc);
                     }
                     xCursor += slot;
                 }

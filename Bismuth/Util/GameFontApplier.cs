@@ -694,7 +694,7 @@ namespace Bismuth
            spawns a TMP shadow GameObject — doesn't stall in one frame. Originals stay visible
            until their shadow attaches, so it reads as a brief styling cascade. */
         private static readonly Queue<Component> _pending = new Queue<Component>();
-        private const int SweepBudget = 128;
+        private const int SweepBudget = 256;
 
         private static void Apply()
         {

@@ -105,6 +105,7 @@
         <Compile Include="Util\GameProbe.cs" />
         <Compile Include="Util\GameUiLayout.cs" />
         <Compile Include="Util\Tweaks.cs" />
+        <Compile Include="Util\Profiles.cs" />
         <Compile Include="UI\UpdatePopup.cs" />
         <Compile Include="UI\LogViewer.cs" />
         <Compile Include="UI\Theme.cs" />
@@ -112,6 +113,7 @@
         <Compile Include="UI\DragHandle.cs" />
         <Compile Include="UI\ResizeHandle.cs" />
         <Compile Include="UI\TabRail.cs" />
+        <Compile Include="UI\PageStack.cs" />
         <Compile Include="UI\UICore.cs" />
         <Compile Include="UI\LocationEditor.cs" />
         <Compile Include="UI\GameUiEditor.cs" />

@@ -361,12 +361,19 @@ namespace Bismuth
                 if (deletedActive)
                 {
                     MainClass.PersistNow();
-                    foreach (var f in new[] { "Settings.xml", "keycounts.txt", "BismuthAttempts.txt" })
+                    Directory.CreateDirectory(keepDir);
+                    // Settings.xml stays locked under Wine even against permissive
+                    // FileShare (sharing violation seen in a Proton tester's log) —
+                    // serialize the live settings straight into the kept dir instead
+                    // of copying the file. Same XmlSerializer format UMM loads with.
+                    if (MainClass.Settings != null)
+                        using (var w = new StreamWriter(Path.Combine(keepDir, "Settings.xml"), false))
+                            new System.Xml.Serialization.XmlSerializer(typeof(Settings)).Serialize(w, MainClass.Settings);
+                    foreach (var f in new[] { "keycounts.txt", "BismuthAttempts.txt" })
                     {
                         string src = Path.Combine(deleteDir, f);
                         if (!File.Exists(src)) continue;
-                        Directory.CreateDirectory(keepDir);
-                        File.Copy(src, Path.Combine(keepDir, f), true);
+                        CopyShared(src, Path.Combine(keepDir, f));
                     }
                 }
                 Directory.Delete(deleteDir, true);
@@ -381,6 +388,16 @@ namespace Bismuth
                 BismuthLog.Log("Duplicate delete failed: " + e);
                 return false;
             }
+        }
+
+        // File.Copy demands exclusive read on the source — under Wine/Proton the active
+        // install's Settings.xml keeps an open handle, which failed the duplicate delete
+        // every launch. Stream-copy with permissive sharing instead.
+        private static void CopyShared(string src, string dst)
+        {
+            using (var s = new FileStream(src, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            using (var d = new FileStream(dst, FileMode.Create, FileAccess.Write, FileShare.None))
+                s.CopyTo(d);
         }
 
         internal static void MarkKeepBoth()

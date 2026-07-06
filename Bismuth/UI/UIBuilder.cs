@@ -10,7 +10,7 @@ namespace Bismuth.UI
     internal static class UIBuilder
     {
         public const float RowHeight = 32f;
-        public const float SectionGap = 12f;
+        public const float SectionGap = 22f;
         public const float LabelFontSize = 15;
         public const float HeaderFontSize = 16;
         public const float SmallCapsFontSize = 12;
@@ -79,6 +79,36 @@ namespace Bismuth.UI
             return go;
         }
 
+        // Standard vertical stack container — the content wrapper used by pages/subpages
+        // for groups whose visibility is toggled or whose children are rebuilt.
+        public static GameObject VGroup(Transform parent, string name = "Group", float spacing = 2f)
+        {
+            var go = Rect(name, parent);
+            var vlg = go.AddComponent<VerticalLayoutGroup>();
+            vlg.childControlWidth = true;
+            vlg.childControlHeight = true;
+            vlg.childForceExpandWidth = true;
+            vlg.childForceExpandHeight = false;
+            vlg.spacing = spacing;
+            return go;
+        }
+
+        // Two equal-width side-by-side stacks — for pairing related controls (e.g. the
+        // panel/overlay font selectors) instead of stacking full-width rows.
+        public static void Columns(Transform parent, out Transform left, out Transform right, float gap = 12f)
+        {
+            var host = Rect("Columns", parent);
+            var hlg = host.AddComponent<HorizontalLayoutGroup>();
+            hlg.childControlWidth = true;
+            hlg.childControlHeight = true;
+            hlg.childForceExpandWidth = true;
+            hlg.childForceExpandHeight = false;
+            hlg.spacing = gap;
+            hlg.childAlignment = TextAnchor.UpperLeft;
+            left = VGroup(host.transform, "Left").transform;
+            right = VGroup(host.transform, "Right").transform;
+        }
+
         public static Image SolidImage(GameObject go, Color color)
         {
             var img = go.AddComponent<Image>();
@@ -99,25 +129,9 @@ namespace Bismuth.UI
             return Tmp(go, text, size, anchor, color ?? Theme.Text);
         }
 
-        // Muted wrapped body copy under a section header (used for the on-screen
-        // editor explanations).
-        public static GameObject Description(Transform parent, string text)
-        {
-            var wrap = Rect("Desc", parent);
-            var vlg = wrap.AddComponent<VerticalLayoutGroup>();
-            vlg.childControlWidth = true;
-            vlg.childControlHeight = true;
-            vlg.childForceExpandWidth = true;
-            vlg.childForceExpandHeight = false;
-            vlg.padding = new RectOffset(10, 4, 0, 6);
-
-            var t = Label(wrap.transform, text, (int)LabelFontSize - 2, TextAnchor.UpperLeft, Theme.TextMuted);
-            t.textWrappingMode = TextWrappingModes.Normal;
-            return wrap;
-        }
-
         public static GameObject SectionHeader(Transform parent, string text)
         {
+            SettingsSearch.Register(text);
             var go = Rect(text + "Header", parent);
             var le = go.AddComponent<LayoutElement>();
             le.preferredHeight = 22f;
@@ -134,6 +148,7 @@ namespace Bismuth.UI
         // scroll viewport instead of being clipped by RectMask2D.
         public static GameObject SectionHeaderWithHelp(Transform parent, string text, string helpText)
         {
+            SettingsSearch.Register(text);
             var go = Rect(text + "Header", parent);
             var le = go.AddComponent<LayoutElement>();
             le.preferredHeight = 22f;
@@ -235,6 +250,7 @@ namespace Bismuth.UI
 
         public static GameObject Toggle(Transform parent, string label, bool initial, Action<bool> onChange)
         {
+            SettingsSearch.Register(label);
             var row = Row(parent);
             bool value = initial;
 
@@ -301,6 +317,7 @@ namespace Bismuth.UI
             Action<bool> onToggle,
             Action<Transform> buildBody = null)
         {
+            SettingsSearch.Register(title);
             var container = Rect("Coll", parent);
             var clVlg = container.AddComponent<VerticalLayoutGroup>();
             clVlg.childControlWidth = true;
@@ -442,6 +459,248 @@ namespace Bismuth.UI
             return container;
         }
 
+        // Drill-in row for a PageStack subpage: optional toggle ring on the left (Key
+        // Viewer preset-row style), title, muted › chevron on the right. Row click
+        // navigates; ring click toggles without navigating. `keywords` = comma-separated
+        // phrases naming the subpage's contents, for settings search.
+        public static GameObject NavRow(Transform parent, string title, Action onOpen, string keywords = null)
+            => NavRowInternal(parent, title, false, false, null, onOpen, keywords);
+
+        public static GameObject NavRow(Transform parent, string title, bool initial, Action<bool> onToggle, Action onOpen, string keywords = null)
+            => NavRowInternal(parent, title, true, initial, onToggle, onOpen, keywords);
+
+        private static GameObject NavRowInternal(
+            Transform parent, string title,
+            bool hasToggle, bool initial, Action<bool> onToggle, Action onOpen, string keywords)
+        {
+            SettingsSearch.Register(title, onOpen, keywords);
+            var row = Row(parent);
+            var bg = SolidImage(row, new Color(0, 0, 0, 0));
+            bg.raycastTarget = true;
+
+            const float ringSize = 14f;
+            const float dotSize = 6f;
+
+            if (hasToggle)
+            {
+                bool value = initial;
+
+                // Oversized hit zone so the 14px ring is comfortably clickable.
+                var hitGo = Rect("RingHit", row.transform);
+                var hitRect = (RectTransform)hitGo.transform;
+                hitRect.anchorMin = new Vector2(0, 0);
+                hitRect.anchorMax = new Vector2(0, 1);
+                hitRect.pivot = new Vector2(0, 0.5f);
+                hitRect.anchoredPosition = new Vector2(2f, 0);
+                hitRect.sizeDelta = new Vector2(28f, 0);
+                var hitBg = SolidImage(hitGo, new Color(0, 0, 0, 0));
+                hitBg.raycastTarget = true;
+
+                var ringGo = Rect("Ring", hitGo.transform);
+                var ringRect = (RectTransform)ringGo.transform;
+                ringRect.anchorMin = ringRect.anchorMax = new Vector2(0.5f, 0.5f);
+                ringRect.pivot = new Vector2(0.5f, 0.5f);
+                ringRect.sizeDelta = new Vector2(ringSize, ringSize);
+                var ring = ringGo.AddComponent<RoundedRectGraphic>();
+                ring.Radius = ringSize * 0.5f;
+                ring.BorderWidth = 1.25f;
+                ring.BorderColor = value ? Theme.ToggleOn : Theme.ToggleOff;
+                ring.color = new Color(0, 0, 0, 0);
+                ring.raycastTarget = false;
+                var ringAccent = ringGo.AddComponent<AccentBorder>();
+                ringAccent.Active = value;
+
+                var dotGo = Rect("Dot", ringGo.transform);
+                var dotRect = (RectTransform)dotGo.transform;
+                dotRect.anchorMin = dotRect.anchorMax = new Vector2(0.5f, 0.5f);
+                dotRect.pivot = new Vector2(0.5f, 0.5f);
+                dotRect.sizeDelta = new Vector2(dotSize, dotSize);
+                var dot = dotGo.AddComponent<RoundedRectGraphic>();
+                dot.Radius = dotSize * 0.5f;
+                dot.color = Theme.ToggleOn;
+                dot.raycastTarget = false;
+                dotGo.AddComponent<AccentFill>();
+                dotGo.SetActive(value);
+
+                ClickHandler.Attach(hitGo, () =>
+                {
+                    value = !value;
+                    ring.BorderColor = value ? Theme.ToggleOn : Theme.ToggleOff;
+                    ringAccent.Active = value;
+                    dotGo.SetActive(value);
+                    onToggle?.Invoke(value);
+                });
+            }
+
+            var labelGo = Rect("Title", row.transform);
+            var labelRect = (RectTransform)labelGo.transform;
+            labelRect.anchorMin = new Vector2(0, 0);
+            labelRect.anchorMax = new Vector2(1, 1);
+            labelRect.offsetMin = new Vector2(hasToggle ? 36f : 8f, 0);
+            labelRect.offsetMax = new Vector2(-28f, 0);
+            var titleTxt = labelChild(labelGo.transform, title, (int)LabelFontSize, TextAnchor.MiddleLeft, Theme.Text);
+            // Feature names collide with game localization keys; the guard restores the
+            // text after the game's rewrite pass.
+            var rowGuard = labelGo.AddComponent<TabLabelGuard>();
+            rowGuard.Label = titleTxt;
+            rowGuard.Expected = title;
+
+            var chevGo = Rect("Chevron", row.transform);
+            var chevRect = (RectTransform)chevGo.transform;
+            chevRect.anchorMin = new Vector2(1, 0);
+            chevRect.anchorMax = new Vector2(1, 1);
+            chevRect.pivot = new Vector2(1, 0.5f);
+            chevRect.anchoredPosition = new Vector2(-10f, 0);
+            chevRect.sizeDelta = new Vector2(16f, 0);
+            labelChild(chevGo.transform, "›", (int)LabelFontSize + 3, TextAnchor.MiddleCenter, Theme.TextMuted);
+
+            HoverFill(row, bg, Theme.RowBgHover, new Color(0, 0, 0, 0));
+            ClickHandler.Attach(row, onOpen);
+            return row;
+        }
+
+        // Wrapping grid host for ToggleCards. Fixed cell size; the flexible constraint
+        // re-flows the column count whenever the panel width changes.
+        public static GameObject CardGrid(Transform parent)
+        {
+            var go = Rect("CardGrid", parent);
+            var grid = go.AddComponent<GridLayoutGroup>();
+            grid.cellSize = new Vector2(156f, 44f);
+            grid.spacing = new Vector2(6f, 6f);
+            grid.padding = new RectOffset(8, 8, 2, 2);
+            grid.constraint = GridLayoutGroup.Constraint.Flexible;
+            grid.childAlignment = TextAnchor.UpperLeft;
+            return go;
+        }
+
+        // Toggle card — a click-anywhere cell whose accent-tinted background + border show
+        // the enabled state. For pages that are mostly independent on/off flags (Hide UI):
+        // denser and calmer than a column of radio rows.
+        public static GameObject ToggleCard(Transform parent, string label, bool initial, Action<bool> onChange)
+            => CardInternal(parent, label, true, initial, onChange, null);
+
+        // Card with a ⚙ corner button that drills into a subpage. With a toggle, the card
+        // body toggles and only the gear navigates; without one, the whole card navigates.
+        // `keywords` = comma-separated subpage contents, for settings search.
+        public static GameObject NavCard(Transform parent, string label, Action onOpen, string keywords = null)
+            => CardInternal(parent, label, false, false, null, onOpen, keywords);
+
+        public static GameObject NavCard(Transform parent, string label, bool initial, Action<bool> onToggle, Action onOpen, string keywords = null)
+            => CardInternal(parent, label, true, initial, onToggle, onOpen, keywords);
+
+        private static GameObject CardInternal(Transform parent, string label,
+            bool hasToggle, bool initial, Action<bool> onToggle, Action onOpen, string keywords = null)
+        {
+            SettingsSearch.Register(label, onOpen, keywords);
+            var card = Rect("Card_" + label, parent);
+            bool value = initial;
+            bool hover = false;
+
+            var bg = card.AddComponent<RoundedRectGraphic>();
+            bg.Radius = 5f;
+            bg.AAFringe = 0.5f;
+            bg.BorderWidth = 1.25f;
+            bg.raycastTarget = true;
+            // Theme.ApplyAccent repaints these (preserving alpha) when the accent changes;
+            // Active tracks the toggle so an off card keeps its neutral tint.
+            var fillMark = card.AddComponent<AccentFill>();
+            var borderMark = card.AddComponent<AccentBorder>();
+
+            var txtGo = Rect("L", card.transform);
+            var txtRect = (RectTransform)txtGo.transform;
+            txtRect.anchorMin = Vector2.zero;
+            txtRect.anchorMax = Vector2.one;
+            txtRect.offsetMin = new Vector2(8f, 0);
+            txtRect.offsetMax = new Vector2(-8f, 0);
+            var txt = Tmp(txtGo, label, (int)LabelFontSize - 1, TextAnchor.MiddleCenter, Theme.TextMuted);
+            txt.enableAutoSizing = true;
+            txt.fontSizeMin = 9;
+            txt.fontSizeMax = (int)LabelFontSize - 1;
+            txt.overflowMode = TextOverflowModes.Truncate;
+            // Card names collide with game localization keys ("Difficulty" → "난이도");
+            // the guard restores the text after the game's rewrite pass.
+            var cardGuard = txtGo.AddComponent<TabLabelGuard>();
+            cardGuard.Label = txt;
+            cardGuard.Expected = label;
+
+            void Apply()
+            {
+                bool on = hasToggle && value;
+                fillMark.Active = on;
+                borderMark.Active = on;
+                var a = Theme.ToggleOn;
+                if (on)
+                {
+                    bg.color = new Color(a.r, a.g, a.b, hover ? 0.26f : 0.17f);
+                    bg.BorderColor = new Color(a.r, a.g, a.b, 0.9f);
+                    txt.color = Theme.Text;
+                }
+                else
+                {
+                    bg.color = new Color(1f, 1f, 1f, hover ? 0.07f : 0.035f);
+                    bg.BorderColor = new Color(1f, 1f, 1f, 0.08f);
+                    txt.color = Theme.TextMuted;
+                }
+            }
+            Apply();
+
+            var h = card.AddComponent<HoverHandler>();
+            h.OnEnter = () => { hover = true; Apply(); };
+            h.OnExit = () => { hover = false; Apply(); };
+            ClickHandler.Attach(card, hasToggle
+                ? () => { value = !value; Apply(); onToggle?.Invoke(value); }
+                : onOpen);
+
+            if (onOpen != null)
+            {
+                // Settings corner button — its own raycast target, so clicking it never
+                // toggles. Icon is a ··· drawn from circles: user-supplied panel fonts
+                // often lack glyphs like ⚙, which rendered as nothing.
+                var gearGo = Rect("Gear", card.transform);
+                var gearRect = (RectTransform)gearGo.transform;
+                gearRect.anchorMin = gearRect.anchorMax = new Vector2(1, 1);
+                gearRect.pivot = new Vector2(1, 1);
+                gearRect.anchoredPosition = new Vector2(-2f, -2f);
+                gearRect.sizeDelta = new Vector2(20f, 16f);
+                var gearBg = gearGo.AddComponent<RoundedRectGraphic>();
+                gearBg.Radius = 4f;
+                gearBg.AAFringe = 0.5f;
+                gearBg.color = new Color(0, 0, 0, 0);
+                gearBg.raycastTarget = true;
+
+                var dots = new RoundedRectGraphic[3];
+                for (int d = 0; d < 3; d++)
+                {
+                    var dotGo = Rect("D" + d, gearGo.transform);
+                    var dRect = (RectTransform)dotGo.transform;
+                    dRect.anchorMin = dRect.anchorMax = new Vector2(0.5f, 0.5f);
+                    dRect.pivot = new Vector2(0.5f, 0.5f);
+                    dRect.sizeDelta = new Vector2(2.5f, 2.5f);
+                    dRect.anchoredPosition = new Vector2((d - 1) * 4.5f, 0f);
+                    var dg = dotGo.AddComponent<RoundedRectGraphic>();
+                    dg.Radius = 1.25f;
+                    dg.AAFringe = 0.5f;
+                    dg.color = Theme.TextMuted;
+                    dg.raycastTarget = false;
+                    dots[d] = dg;
+                }
+
+                var gh = gearGo.AddComponent<HoverHandler>();
+                gh.OnEnter = () =>
+                {
+                    gearBg.color = new Color(1f, 1f, 1f, 0.12f);
+                    foreach (var dg in dots) dg.color = Theme.Text;
+                };
+                gh.OnExit = () =>
+                {
+                    gearBg.color = new Color(0, 0, 0, 0);
+                    foreach (var dg in dots) dg.color = Theme.TextMuted;
+                };
+                ClickHandler.Attach(gearGo, onOpen);
+            }
+            return card;
+        }
+
         // Internal: create a child Text inside a parent rect (no its own LayoutElement).
         private static TextMeshProUGUI labelChild(Transform parent, string text, int size, TextAnchor anchor, Color color)
         {
@@ -456,6 +715,7 @@ namespace Bismuth.UI
 
         public static GameObject Button(Transform parent, string label, Action onClick)
         {
+            SettingsSearch.Register(label);
             var row = Row(parent);
             var bg = SolidImage(row, Theme.ButtonBg);
             bg.raycastTarget = true;
@@ -490,6 +750,7 @@ namespace Bismuth.UI
             string format = "0.00",
             float step = 0f)
         {
+            SettingsSearch.Register(label);
             var row = Row(parent);
             const float labelW = 140f;
             const float valueW = 56f;
@@ -510,24 +771,26 @@ namespace Bismuth.UI
             var lab = Tmp(labGo, label, (int)LabelFontSize, TextAnchor.MiddleLeft, Theme.Text);
 
             // Value display (right) — a TMP_InputField (on `valGo`) for click-to-type. The
-            // visible text is a child so it doesn't collide with the field's own.
+            // visible text is a child so it doesn't collide with the field's own. Boxed
+            // like TextInput (hover brighten + accent border while focused) so it reads
+            // as editable rather than a static readout.
             var valGo = Rect("Value", row.transform);
             var valRect = (RectTransform)valGo.transform;
-            valRect.anchorMin = new Vector2(1, 0);
-            valRect.anchorMax = new Vector2(1, 1);
+            valRect.anchorMin = valRect.anchorMax = new Vector2(1, 0.5f);
             valRect.pivot = new Vector2(1, 0.5f);
-            valRect.sizeDelta = new Vector2(valueW, 0);
+            valRect.sizeDelta = new Vector2(valueW, 24f);
             valRect.anchoredPosition = new Vector2(-8f, 0);
-            // Transparent bg gives the InputField a raycast target for click-to-focus.
-            var valBg = SolidImage(valGo, new Color(0, 0, 0, 0));
+            var valBg = valGo.AddComponent<RoundedRectGraphic>();
+            valBg.Radius = 4f;
+            valBg.AAFringe = 0.5f;
             valBg.raycastTarget = true;
 
             var valTextGo = Rect("Text", valGo.transform);
             var valTextRect = (RectTransform)valTextGo.transform;
             valTextRect.anchorMin = Vector2.zero;
             valTextRect.anchorMax = Vector2.one;
-            valTextRect.offsetMin = Vector2.zero;
-            valTextRect.offsetMax = Vector2.zero;
+            valTextRect.offsetMin = new Vector2(5f, 0);
+            valTextRect.offsetMax = new Vector2(-5f, 0);
             var valT = Tmp(valTextGo, "", (int)LabelFontSize, TextAnchor.MiddleRight, Theme.TextMuted);
             valT.richText = false;
 
@@ -536,6 +799,21 @@ namespace Bismuth.UI
             input.lineType = TMP_InputField.LineType.SingleLine;
             input.caretBlinkRate = 0.6f;
             input.text = Mathf.Clamp(value, min, max).ToString(format);
+
+            bool valHover = false, valFocus = false;
+            void PaintValBox()
+            {
+                valBg.color = new Color(1f, 1f, 1f, valFocus ? 0.10f : valHover ? 0.09f : 0.05f);
+                valBg.BorderWidth = valFocus ? 1f : 0f;
+                valBg.BorderColor = Theme.ToggleOn;
+                valT.color = valFocus ? Theme.Text : Theme.TextMuted;
+            }
+            PaintValBox();
+            var valHoverH = valGo.AddComponent<HoverHandler>();
+            valHoverH.OnEnter = () => { valHover = true; PaintValBox(); };
+            valHoverH.OnExit = () => { valHover = false; PaintValBox(); };
+            input.onSelect.AddListener(_ => { valFocus = true; PaintValBox(); });
+            input.onDeselect.AddListener(_ => { valFocus = false; PaintValBox(); });
 
             // Track — stretches between label and value
             var trackGo = Rect("Track", row.transform);
@@ -662,6 +940,7 @@ namespace Bismuth.UI
             int currentIndex,
             Action<int> onChange)
         {
+            SettingsSearch.Register(label);
             var row = Row(parent);
             const float labelW = 140f;
             const float btnW = 22f;
@@ -729,9 +1008,9 @@ namespace Bismuth.UI
             return row;
         }
 
-        // Inline dropdown — label + current value/chevron. Clicking expands an option list
-        // beneath it, inside the scroll content (no RectMask2D clipping / floating). For
-        // long option lists where CycleSelector would be tedious.
+        // Dropdown — label + current value/chevron. Clicking opens a floating, scrollable
+        // option list anchored to the row and parented to the canvas root, so it renders
+        // over the page instead of unrolling inside it.
         public static GameObject Dropdown(
             Transform parent,
             string label,
@@ -740,108 +1019,179 @@ namespace Bismuth.UI
             Action<int> onChange,
             IList<TMP_FontAsset> optionFonts = null)
         {
-            var container = Rect("Dropdown_" + label, parent);
-            var clVlg = container.AddComponent<VerticalLayoutGroup>();
-            clVlg.childControlWidth = true;
-            clVlg.childControlHeight = true;
-            clVlg.childForceExpandWidth = true;
-            clVlg.childForceExpandHeight = false;
-            clVlg.spacing = 0f;
-
+            SettingsSearch.Register(label);
             int idx = Mathf.Clamp(currentIndex, 0, options.Count - 1);
 
-            var header = Row(container.transform);
-            var headerBg = SolidImage(header, new Color(0, 0, 0, 0));
-            headerBg.raycastTarget = true;
-            HoverFill(header, headerBg, Theme.RowBgHover, new Color(0, 0, 0, 0));
+            var row = Row(parent);
+            var bg = SolidImage(row, new Color(0, 0, 0, 0));
+            bg.raycastTarget = true;
+            HoverFill(row, bg, Theme.RowBgHover, new Color(0, 0, 0, 0));
 
-            var labGo = Rect("Label", header.transform);
+            var labGo = Rect("Label", row.transform);
             var labRect = (RectTransform)labGo.transform;
             labRect.anchorMin = new Vector2(0, 0);
             labRect.anchorMax = new Vector2(0, 1);
             labRect.pivot = new Vector2(0, 0.5f);
             labRect.sizeDelta = new Vector2(140f, 0);
             labRect.anchoredPosition = new Vector2(8f, 0);
-            var lab = Tmp(labGo, label, (int)LabelFontSize, TextAnchor.MiddleLeft, Theme.Text);
+            Tmp(labGo, label, (int)LabelFontSize, TextAnchor.MiddleLeft, Theme.Text);
 
-            var valGo = Rect("Value", header.transform);
+            var valGo = Rect("Value", row.transform);
             var valRect = (RectTransform)valGo.transform;
             valRect.anchorMin = new Vector2(0, 0);
             valRect.anchorMax = new Vector2(1, 1);
             valRect.offsetMin = new Vector2(150f, 0);
             valRect.offsetMax = new Vector2(-8f, 0);
-            var val = Tmp(valGo, (options.Count > 0 ? options[idx] : "") + "  ▾", (int)LabelFontSize, TextAnchor.MiddleRight, Theme.Text);
-            // Render the selected value (and each option below) in its own font, for a preview.
-            void SetValFont()
+            var val = Tmp(valGo, "", (int)LabelFontSize, TextAnchor.MiddleRight, Theme.Text);
+
+            // Render the selected value (and each option in the list) in its own font.
+            void SetVal()
             {
-                if (optionFonts != null && idx >= 0 && idx < optionFonts.Count && optionFonts[idx] != null)
-                    val.font = optionFonts[idx];
+                val.text = (options.Count > 0 && idx >= 0 ? options[idx] : "") + "  ▾";
+                val.font = optionFonts != null && idx >= 0 && idx < optionFonts.Count && optionFonts[idx] != null
+                    ? optionFonts[idx] : Theme.TmpFont;
             }
-            SetValFont();
+            SetVal();
 
-            var listGo = Rect("Options", container.transform);
-            var lVlg = listGo.AddComponent<VerticalLayoutGroup>();
-            lVlg.childControlWidth = true;
-            lVlg.childControlHeight = true;
-            lVlg.childForceExpandWidth = true;
-            lVlg.childForceExpandHeight = false;
-            lVlg.spacing = 1f;
-            lVlg.padding = new RectOffset(0, 0, 2, 4);
-            listGo.SetActive(false);
+            ClickHandler.Attach(row, () =>
+                OpenDropdownList((RectTransform)row.transform, options, idx, optionFonts, i =>
+                {
+                    if (i == idx) return;
+                    idx = i;
+                    SetVal();
+                    onChange?.Invoke(i);
+                }));
 
-            bool open = false;
-            var optTexts = new TextMeshProUGUI[options.Count];
+            return row;
+        }
+
+        // The floating list for Dropdown: full-screen transparent blocker (click-outside
+        // closes, swallows stray wheel events) + a bordered panel right-aligned under the
+        // trigger row (flips above it when there's no room), scrollable past ~8 options.
+        private static void OpenDropdownList(RectTransform trigger, IList<string> options,
+            int selectedIdx, IList<TMP_FontAsset> optionFonts, Action<int> onPick)
+        {
+            var root = UICore.CanvasRoot;
+            if (root == null || options == null || options.Count == 0) return;
+            var canvas = root.GetComponent<Canvas>();
+
+            var blocker = Rect("DropdownBlocker", root.transform);
+            var bRect = (RectTransform)blocker.transform;
+            bRect.anchorMin = Vector2.zero;
+            bRect.anchorMax = Vector2.one;
+            bRect.offsetMin = Vector2.zero;
+            bRect.offsetMax = Vector2.zero;
+            var bImg = SolidImage(blocker, new Color(0, 0, 0, 0));
+            bImg.raycastTarget = true;
+            blocker.AddComponent<ScrollSwallower>();
 
             Action close = () =>
             {
-                open = false;
-                listGo.SetActive(false);
-                val.text = (options.Count > 0 ? options[idx] : "") + "  ▾";
-                SetValFont();
+                if (blocker == null) return;
+                blocker.transform.SetParent(null);
+                UnityEngine.Object.Destroy(blocker);
             };
+            ClickHandler.Attach(blocker, close);
+
+            const float rowH = 26f;
+            const float pad = 4f;
+            const float width = 240f;
+            float natural = options.Count * rowH + pad * 2;
+            float height = Mathf.Min(natural, 8 * rowH + pad * 2);
+
+            var panel = Rect("Popup", blocker.transform);
+            var pRect = (RectTransform)panel.transform;
+            pRect.sizeDelta = new Vector2(width, height);
+            SolidImage(panel, Theme.Panel);
+            AddBorder(panel, Theme.PanelBorder, 1f);
+
+            // SSO canvas → world corners are screen px; scaleFactor converts panel units.
+            Vector3[] c = new Vector3[4];
+            trigger.GetWorldCorners(c);
+            float sf = canvas != null ? canvas.scaleFactor : 1f;
+            bool openUp = c[0].y - (height + 4f) * sf < 0f;
+            pRect.pivot = new Vector2(1f, openUp ? 0f : 1f);
+            panel.transform.position = openUp
+                ? c[2] + new Vector3(0f, 2f * sf, 0f)   // top-right corner, opening upward
+                : c[3] + new Vector3(0f, -2f * sf, 0f); // bottom-right corner, downward
+
+            var viewport = Rect("Viewport", panel.transform);
+            var vRect = (RectTransform)viewport.transform;
+            vRect.anchorMin = Vector2.zero;
+            vRect.anchorMax = Vector2.one;
+            vRect.offsetMin = new Vector2(1f, 1f);
+            vRect.offsetMax = new Vector2(-1f, -1f);
+            var vImg = SolidImage(viewport, new Color(0, 0, 0, 0));
+            vImg.raycastTarget = true;
+            viewport.AddComponent<RectMask2D>();
+
+            var content = VGroup(viewport.transform, "Content", 0f);
+            var cRect = (RectTransform)content.transform;
+            cRect.anchorMin = new Vector2(0, 1);
+            cRect.anchorMax = new Vector2(1, 1);
+            cRect.pivot = new Vector2(0.5f, 1f);
+            cRect.anchoredPosition = Vector2.zero;
+            cRect.sizeDelta = Vector2.zero;
+            content.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(0, 0, (int)pad, (int)pad);
+            var fitter = content.AddComponent<ContentSizeFitter>();
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            ScrollRect scroll = null;
+            if (natural > height)
+            {
+                scroll = panel.AddComponent<ScrollRect>();
+                scroll.viewport = vRect;
+                scroll.content = cRect;
+                scroll.horizontal = false;
+                scroll.movementType = ScrollRect.MovementType.Clamped;
+                scroll.scrollSensitivity = 24f;
+            }
 
             for (int i = 0; i < options.Count; i++)
             {
                 int oi = i;
-                var opt = Rect("Opt_" + i, listGo.transform);
-                var optLe = opt.AddComponent<LayoutElement>();
-                optLe.preferredHeight = 26f;
-                optLe.minHeight = 26f;
-                var optBg = SolidImage(opt, Theme.RowBg);
-                optBg.raycastTarget = true;
-                HoverFill(opt, optBg, Theme.RowBgHover, Theme.RowBg);
+                bool sel = oi == selectedIdx;
 
-                var t = labelChild(opt.transform, (oi == idx ? "● " : "   ") + options[oi],
-                    (int)LabelFontSize, TextAnchor.MiddleLeft, oi == idx ? Theme.Text : Theme.TextMuted);
-                t.rectTransform.offsetMin = new Vector2(20f, 0);
+                var opt = Rect("Opt_" + i, content.transform);
+                var optLe = opt.AddComponent<LayoutElement>();
+                optLe.preferredHeight = rowH;
+                optLe.minHeight = rowH;
+                var optBg = SolidImage(opt, new Color(0, 0, 0, 0));
+                optBg.raycastTarget = true;
+                HoverFill(opt, optBg, Theme.RowBgHover, new Color(0, 0, 0, 0));
+
+                if (sel)
+                {
+                    var dotGo = Rect("Dot", opt.transform);
+                    var dotRect = (RectTransform)dotGo.transform;
+                    dotRect.anchorMin = new Vector2(0, 0.5f);
+                    dotRect.anchorMax = new Vector2(0, 0.5f);
+                    dotRect.pivot = new Vector2(0, 0.5f);
+                    dotRect.anchoredPosition = new Vector2(9f, 0);
+                    dotRect.sizeDelta = new Vector2(6f, 6f);
+                    var dot = dotGo.AddComponent<RoundedRectGraphic>();
+                    dot.Radius = 3f;
+                    dot.color = Theme.ToggleOn;
+                    dot.raycastTarget = false;
+                    dotGo.AddComponent<AccentFill>();
+                }
+
+                var t = labelChild(opt.transform, options[oi], (int)LabelFontSize,
+                    TextAnchor.MiddleLeft, sel ? Theme.Text : Theme.TextMuted);
+                t.rectTransform.offsetMin = new Vector2(24f, 0);
+                t.rectTransform.offsetMax = new Vector2(-8f, 0);
                 if (optionFonts != null && oi < optionFonts.Count && optionFonts[oi] != null)
                     t.font = optionFonts[oi];
-                optTexts[oi] = t;
 
-                ClickHandler.Attach(opt, () =>
-                {
-                    if (oi != idx)
-                    {
-                        optTexts[idx].text = "   " + options[idx];
-                        optTexts[idx].color = Theme.TextMuted;
-                        idx = oi;
-                        optTexts[idx].text = "● " + options[idx];
-                        optTexts[idx].color = Theme.Text;
-                        onChange?.Invoke(idx);
-                    }
-                    close();
-                });
+                ClickHandler.Attach(opt, () => { onPick(oi); close(); });
             }
 
-            ClickHandler.Attach(header, () =>
+            // Start scrolled so the selected option is centered-ish in view.
+            if (scroll != null && selectedIdx > 0)
             {
-                open = !open;
-                listGo.SetActive(open);
-                val.text = (options.Count > 0 ? options[idx] : "") + (open ? "  ▴" : "  ▾");
-                SetValFont();
-            });
-
-            return container;
+                float target = selectedIdx * rowH + pad - (height - rowH) * 0.5f;
+                cRect.anchoredPosition = new Vector2(0f, Mathf.Clamp(target, 0f, natural - height));
+            }
         }
 
         // Single-line text input — label on left, editable field on right. Fires onCommit
@@ -853,6 +1203,7 @@ namespace Bismuth.UI
             string initial,
             Action<string> onCommit)
         {
+            SettingsSearch.Register(label);
             var row = Row(parent);
             const float labelW = 140f;
 
@@ -903,6 +1254,7 @@ namespace Bismuth.UI
             string[] options,
             Action<int> onChange)
         {
+            SettingsSearch.Register(label);
             var row = Row(parent);
             const float labelW = 140f;
             const float segW = 52f;
@@ -980,6 +1332,7 @@ namespace Bismuth.UI
             string title,
             Action<Transform> buildBody)
         {
+            SettingsSearch.Register(title);
             var container = Rect("Section_" + title, parent);
             var clVlg = container.AddComponent<VerticalLayoutGroup>();
             clVlg.childControlWidth = true;
@@ -1049,218 +1402,279 @@ namespace Bismuth.UI
             return container;
         }
 
-        // Gradient editor. Solid toggle hides the Stops list and shows one ColorPicker bound
-        // to Stops[0] (matches ColorGradient.Evaluate's solid mode). Add/Remove rebuilds the
-        // whole stops list so the numbered headers stay correct.
-        public static GameObject GradientEditor(
-            Transform parent,
-            string title,
+        // Gradient controls, built flat into `body` (a subpage section). Solid toggle hides
+        // the Stops list and shows one ColorPicker bound to Stops[0] (matches
+        // ColorGradient.Evaluate's solid mode). Add/Remove rebuilds the whole stops list so
+        // the numbered headers stay correct.
+        public static void GradientBody(
+            Transform body,
             object gradient,
             Action onChange)
         {
-            return ExpandSection(parent, title, body =>
+            var grad = (Bismuth.ColorGradient)gradient;
+
+            GameObject stopsSection = null;
+            GameObject solidPicker = null;
+
+            Collapsible(body, "Solid", grad.IsSolid, v => {
+                grad.IsSolid = v;
+                if (stopsSection != null) stopsSection.SetActive(!v);
+                if (solidPicker != null) solidPicker.SetActive(v);
+                onChange?.Invoke();
+            }, null);
+
+            stopsSection = VGroup(body, "Stops");
+            BuildGradientStops(stopsSection.transform, grad, onChange);
+
+            // Solid-mode picker. Bound to Stops[0] since that's what ColorGradient.Evaluate
+            // returns when IsSolid is true. Creates a stop on first edit if Stops is empty.
+            Color firstColor = grad.Stops.Count > 0
+                ? new Color(grad.Stops[0].R, grad.Stops[0].G, grad.Stops[0].B, grad.Stops[0].A)
+                : Color.white;
+            solidPicker = ColorPicker(body, "Color", firstColor, true, c =>
             {
-                var grad = (Bismuth.ColorGradient)gradient;
-
-                GameObject stopsSection = null;
-                GameObject solidPicker = null;
-
-                Collapsible(body, "Solid", grad.IsSolid, v => {
-                    grad.IsSolid = v;
-                    if (stopsSection != null) stopsSection.SetActive(!v);
-                    if (solidPicker != null) solidPicker.SetActive(v);
-                    onChange?.Invoke();
-                }, null);
-
-                stopsSection = ExpandSection(body, "Stops", stopsBody =>
+                if (grad.Stops.Count == 0)
                 {
-                    var stopsList = Rect("StopsList", stopsBody);
-                    var listVlg = stopsList.AddComponent<VerticalLayoutGroup>();
-                    listVlg.childControlWidth = true;
-                    listVlg.childControlHeight = true;
-                    listVlg.childForceExpandWidth = true;
-                    listVlg.childForceExpandHeight = false;
-                    listVlg.spacing = 2f;
-
-                    Action rebuild = null;
-                    rebuild = () =>
+                    grad.Stops.Add(new Bismuth.ColorStop
                     {
-                        // Detach + destroy all existing stop rows so we can re-number them.
-                        for (int i = stopsList.transform.childCount - 1; i >= 0; i--)
-                        {
-                            var c = stopsList.transform.GetChild(i);
-                            c.SetParent(null);
-                            UnityEngine.Object.Destroy(c.gameObject);
-                        }
-                        for (int i = 0; i < grad.Stops.Count; i++)
-                        {
-                            BuildStopSection(stopsList.transform, i + 1, grad.Stops[i], grad, onChange, rebuild);
-                        }
-                    };
-                    rebuild();
-
-                    Button(stopsBody, "+ Add stop", () =>
-                    {
-                        grad.Stops.Add(new Bismuth.ColorStop
-                        {
-                            Progress = 1f, R = 1f, G = 1f, B = 1f, A = 1f
-                        });
-                        rebuild();
-                        onChange?.Invoke();
+                        Progress = 0f, R = c.r, G = c.g, B = c.b, A = c.a
                     });
-                });
-
-                // Solid-mode picker. Bound to Stops[0] since that's what ColorGradient.Evaluate
-                // returns when IsSolid is true. Creates a stop on first edit if Stops is empty.
-                Color firstColor = grad.Stops.Count > 0
-                    ? new Color(grad.Stops[0].R, grad.Stops[0].G, grad.Stops[0].B, grad.Stops[0].A)
-                    : Color.white;
-                solidPicker = ColorPicker(body, "Color", firstColor, true, c =>
+                }
+                else
                 {
-                    if (grad.Stops.Count == 0)
-                    {
-                        grad.Stops.Add(new Bismuth.ColorStop
-                        {
-                            Progress = 0f, R = c.r, G = c.g, B = c.b, A = c.a
-                        });
-                    }
-                    else
-                    {
-                        grad.Stops[0].R = c.r; grad.Stops[0].G = c.g;
-                        grad.Stops[0].B = c.b; grad.Stops[0].A = c.a;
-                    }
+                    grad.Stops[0].R = c.r; grad.Stops[0].G = c.g;
+                    grad.Stops[0].B = c.b; grad.Stops[0].A = c.a;
+                }
+                onChange?.Invoke();
+            });
+
+            // Initial visibility from the saved Solid flag.
+            stopsSection.SetActive(!grad.IsSolid);
+            solidPicker.SetActive(grad.IsSolid);
+
+            var perfectColor = new Color(grad.PR, grad.PG, grad.PB, grad.PA);
+            Collapsible(body, "Perfect color (t=1)", grad.HasPerfectColor, v =>
+            {
+                grad.HasPerfectColor = v;
+                onChange?.Invoke();
+            }, perfectBody =>
+            {
+                ColorPicker(perfectBody, "Color", perfectColor, true, c =>
+                {
+                    grad.PR = c.r; grad.PG = c.g; grad.PB = c.b; grad.PA = c.a;
                     onChange?.Invoke();
-                });
-
-                // Initial visibility from the saved Solid flag.
-                stopsSection.SetActive(!grad.IsSolid);
-                solidPicker.SetActive(grad.IsSolid);
-
-                var perfectColor = new Color(grad.PR, grad.PG, grad.PB, grad.PA);
-                Collapsible(body, "Perfect color (t=1)", grad.HasPerfectColor, v =>
-                {
-                    grad.HasPerfectColor = v;
-                    onChange?.Invoke();
-                }, perfectBody =>
-                {
-                    ColorPicker(perfectBody, "Color", perfectColor, true, c =>
-                    {
-                        grad.PR = c.r; grad.PG = c.g; grad.PB = c.b; grad.PA = c.a;
-                        onChange?.Invoke();
-                    });
                 });
             });
         }
 
-        // Per-stop section: header has "Stop N" + a live position preview text (right-aligned).
-        // Body has Position slider + ColorPicker + Remove. Slider's onChange updates the header
-        // text in real-time so users can see the current position without opening the stop.
-        private static GameObject BuildStopSection(
-            Transform parent,
-            int displayNumber,
-            Bismuth.ColorStop stop,
-            Bismuth.ColorGradient grad,
-            Action onChange,
-            Action rebuild)
+        // Gradient stops editor: a full-width strip rendering the live gradient, one
+        // draggable handle per stop (click selects, drag moves), and an inline editor
+        // (Position / Color / Remove) for the selected stop. The stops list stays sorted
+        // by Progress — Evaluate's lerp scan assumes ascending order.
+        private static void BuildGradientStops(Transform parent, Bismuth.ColorGradient grad, Action onChange)
         {
-            var container = Rect("Stop_" + displayNumber, parent);
-            var vlg = container.AddComponent<VerticalLayoutGroup>();
-            vlg.childControlWidth = true;
-            vlg.childControlHeight = true;
-            vlg.childForceExpandWidth = true;
-            vlg.childForceExpandHeight = false;
-            vlg.spacing = 0f;
+            const int texW = 256;
+            const float stripH = 26f;
+            const float markerW = 14f;
+            const float markerH = 32f;
+            const float labelH = 14f;
 
-            var header = Rect("Header", container.transform);
-            var headerLe = header.AddComponent<LayoutElement>();
-            headerLe.preferredHeight = RowHeight;
-            headerLe.minHeight = RowHeight;
-            var headerBg = SolidImage(header, new Color(0, 0, 0, 0));
-            headerBg.raycastTarget = true;
+            var host = Rect("GradientStrip", parent);
+            var hostLe = host.AddComponent<LayoutElement>();
+            float hostH = 4f + markerH + labelH;
+            hostLe.preferredHeight = hostH;
+            hostLe.minHeight = hostH;
 
-            var arrowGo = Rect("Arrow", header.transform);
-            var arrowRect = (RectTransform)arrowGo.transform;
-            arrowRect.anchorMin = new Vector2(0, 0);
-            arrowRect.anchorMax = new Vector2(0, 1);
-            arrowRect.pivot = new Vector2(0, 0.5f);
-            arrowRect.sizeDelta = new Vector2(24f, 0);
-            arrowRect.anchoredPosition = new Vector2(2f, 0);
-            var chevron = labelChild(arrowGo.transform, "▶", 15, TextAnchor.MiddleCenter, Theme.TextMuted);
+            // Inset so the end markers (t=0 / t=1) don't clip at the panel edges.
+            var stripGo = Rect("Strip", host.transform);
+            var strip = (RectTransform)stripGo.transform;
+            strip.anchorMin = new Vector2(0, 1);
+            strip.anchorMax = new Vector2(1, 1);
+            strip.pivot = new Vector2(0.5f, 1f);
+            strip.sizeDelta = new Vector2(-2f * (8f + markerW * 0.5f), stripH);
+            strip.anchoredPosition = new Vector2(0, -7f);
 
-            var titleGo = Rect("Title", header.transform);
-            var titleRect = (RectTransform)titleGo.transform;
-            titleRect.anchorMin = new Vector2(0, 0);
-            titleRect.anchorMax = new Vector2(1, 1);
-            titleRect.offsetMin = new Vector2(30f, 0);
-            titleRect.offsetMax = new Vector2(-80f, 0);
-            var titleBg = SolidImage(titleGo, new Color(0, 0, 0, 0));
-            titleBg.raycastTarget = true;
-            labelChild(titleGo.transform, "Stop " + displayNumber, (int)LabelFontSize, TextAnchor.MiddleLeft, Theme.Text);
+            var tex = new Texture2D(texW, 1, TextureFormat.RGBA32, false);
+            tex.wrapMode = TextureWrapMode.Clamp;
+            tex.filterMode = FilterMode.Bilinear;
+            var stripImg = stripGo.AddComponent<RawImage>();
+            stripImg.texture = tex;
+            stripImg.raycastTarget = false;
+            AddBorder(stripGo, Theme.PanelBorder, 1f);
+            stripGo.AddComponent<TextureReleaser>().Tex = tex;
 
-            // Position preview (right-aligned, muted) — live-updated by the body's position slider.
-            var posGo = Rect("Pos", header.transform);
-            var posRect = (RectTransform)posGo.transform;
-            posRect.anchorMin = new Vector2(1, 0);
-            posRect.anchorMax = new Vector2(1, 1);
-            posRect.pivot = new Vector2(1, 0.5f);
-            posRect.sizeDelta = new Vector2(72f, 0);
-            posRect.anchoredPosition = new Vector2(-12f, 0);
-            var posText = Tmp(posGo, stop.Progress.ToString("0.00"), (int)LabelFontSize, TextAnchor.MiddleRight, Theme.TextMuted);
-
-            var bodyGo = Rect("Body", container.transform);
-            var bodyVlg = bodyGo.AddComponent<VerticalLayoutGroup>();
-            bodyVlg.childControlWidth = true;
-            bodyVlg.childControlHeight = true;
-            bodyVlg.childForceExpandWidth = true;
-            bodyVlg.childForceExpandHeight = false;
-            bodyVlg.spacing = 2f;
-            bodyVlg.padding = new RectOffset(24, 0, 2, 6);
-            var bodyLe = bodyGo.AddComponent<LayoutElement>();
-            bodyLe.preferredHeight = -1f;
-            var bodyCg = bodyGo.AddComponent<CanvasGroup>();
-            bodyCg.alpha = 0f;
-            bodyGo.AddComponent<RectMask2D>();
-
-            Slider(bodyGo.transform, "Position", stop.Progress, 0f, 1f, v =>
+            void Rebake()
             {
-                stop.Progress = v;
-                posText.text = v.ToString("0.00");
-                onChange?.Invoke();
-            }, "0.00");
+                var px = new Color[texW];
+                for (int i = 0; i < texW; i++) px[i] = grad.Evaluate(i / (float)(texW - 1));
+                tex.SetPixels(px);
+                tex.Apply(false);
+            }
 
-            var stopColor = new Color(stop.R, stop.G, stop.B, stop.A);
-            ColorPicker(bodyGo.transform, "Color", stopColor, true, c =>
+            // Marker layer sits above the strip image + border edges.
+            var markersHost = Rect("Markers", stripGo.transform);
+            var mhRect = (RectTransform)markersHost.transform;
+            mhRect.anchorMin = Vector2.zero;
+            mhRect.anchorMax = Vector2.one;
+            mhRect.offsetMin = Vector2.zero;
+            mhRect.offsetMax = Vector2.zero;
+
+            var editorHost = VGroup(parent, "StopEditor");
+
+            Bismuth.ColorStop selected = null;
+            var markers = new List<(Bismuth.ColorStop Stop, RectTransform Rect, RoundedRectGraphic G, TextMeshProUGUI Lbl)>();
+            SliderControl posCtrl = null;
+            Action rebuildMarkers = null, rebuildEditor = null;
+
+            void SortStops() => grad.Stops.Sort((a, b) => a.Progress.CompareTo(b.Progress));
+
+            // Reposition + repaint every live marker from its stop (no rebuild — safe to
+            // call mid-drag, when destroying the dragged handle would kill the gesture).
+            void RepaintMarkers()
             {
-                stop.R = c.r; stop.G = c.g; stop.B = c.b; stop.A = c.a;
-                onChange?.Invoke();
-            });
+                foreach (var m in markers)
+                {
+                    float t = Mathf.Clamp01(m.Stop.Progress);
+                    m.Rect.anchorMin = m.Rect.anchorMax = new Vector2(t, 0.5f);
+                    m.Lbl.text = m.Stop.Progress.ToString("0.00");
+                    m.G.color = new Color(m.Stop.R, m.Stop.G, m.Stop.B, 1f); // opaque swatch
+                    bool sel = m.Stop == selected;
+                    m.G.BorderColor = sel ? Theme.ToggleOn : new Color(1f, 1f, 1f, 0.35f);
+                    m.Lbl.color = sel ? Theme.Text : Theme.TextMuted;
+                }
+            }
 
-            Button(bodyGo.transform, "Remove this stop", () =>
+            rebuildMarkers = () =>
             {
-                grad.Stops.Remove(stop);
-                rebuild?.Invoke();
-                onChange?.Invoke();
-            });
+                for (int i = markersHost.transform.childCount - 1; i >= 0; i--)
+                {
+                    var c = markersHost.transform.GetChild(i);
+                    c.SetParent(null);
+                    UnityEngine.Object.Destroy(c.gameObject);
+                }
+                markers.Clear();
 
-            bodyGo.SetActive(false);
+                foreach (var s in grad.Stops)
+                {
+                    var stop = s;
+                    var mGo = Rect("Stop", markersHost.transform);
+                    var mRect = (RectTransform)mGo.transform;
+                    mRect.pivot = new Vector2(0.5f, 0.5f);
+                    mRect.sizeDelta = new Vector2(markerW, markerH);
+                    var g = mGo.AddComponent<RoundedRectGraphic>();
+                    g.Radius = 4f;
+                    g.AAFringe = 0.5f;
+                    g.BorderWidth = 1.5f;
+                    g.raycastTarget = true;
 
-            var animator = bodyGo.AddComponent<ExpandAnimator>();
-            animator.Body = (RectTransform)bodyGo.transform;
-            animator.BodyLe = bodyLe;
-            animator.BodyCg = bodyCg;
-            animator.Chevron = chevron.rectTransform;
+                    var lblGo = Rect("Pos", mGo.transform);
+                    var lblRect = (RectTransform)lblGo.transform;
+                    lblRect.anchorMin = new Vector2(0.5f, 0);
+                    lblRect.anchorMax = new Vector2(0.5f, 0);
+                    lblRect.pivot = new Vector2(0.5f, 1f);
+                    lblRect.anchoredPosition = new Vector2(0, -1f);
+                    lblRect.sizeDelta = new Vector2(44f, labelH);
+                    var lbl = Tmp(lblGo, "", 11, TextAnchor.UpperCenter, Theme.TextMuted);
 
-            bool expanded = false;
-            Action toggleExpand = () => {
-                expanded = !expanded;
-                animator.Set(expanded);
+                    var h = mGo.AddComponent<GradientStopHandle>();
+                    h.Strip = strip;
+                    h.OnSelect = () =>
+                    {
+                        if (selected == stop) return;
+                        selected = stop;
+                        RepaintMarkers();
+                        rebuildEditor();
+                    };
+                    h.OnMove = t =>
+                    {
+                        stop.Progress = t;
+                        SortStops();
+                        RepaintMarkers();
+                        Rebake();
+                        if (posCtrl != null && selected == stop)
+                        {
+                            posCtrl.Value = t;
+                            posCtrl.ApplyVisuals();
+                        }
+                        onChange?.Invoke();
+                    };
+
+                    markers.Add((stop, mRect, g, lbl));
+                }
+                RepaintMarkers();
             };
-            ClickHandler.Attach(titleGo, toggleExpand);
-            ClickHandler.Attach(arrowGo, toggleExpand);
-            ClickHandler.Attach(header, toggleExpand);
-            HoverFill(header, headerBg, Theme.RowBgHover, new Color(0, 0, 0, 0));
 
-            return container;
+            rebuildEditor = () =>
+            {
+                for (int i = editorHost.transform.childCount - 1; i >= 0; i--)
+                {
+                    var c = editorHost.transform.GetChild(i);
+                    c.SetParent(null);
+                    UnityEngine.Object.Destroy(c.gameObject);
+                }
+                posCtrl = null;
+                if (selected != null && !grad.Stops.Contains(selected)) selected = null;
+
+                if (selected == null)
+                {
+                    var hintRow = Row(editorHost.transform, 24f);
+                    var hint = Label(hintRow.transform,
+                        grad.Stops.Count == 0 ? "No stops yet — add one below" : "Click a stop on the strip to edit it",
+                        (int)LabelFontSize - 2, TextAnchor.MiddleLeft, Theme.TextMuted);
+                    hint.rectTransform.offsetMin = new Vector2(8f, 0);
+                    return;
+                }
+
+                var stop = selected;
+                var posRow = Slider(editorHost.transform, "Position", stop.Progress, 0f, 1f, v =>
+                {
+                    stop.Progress = v;
+                    SortStops();
+                    RepaintMarkers();
+                    Rebake();
+                    onChange?.Invoke();
+                }, "0.00");
+                posCtrl = posRow.GetComponentInChildren<SliderControl>();
+
+                ColorPicker(editorHost.transform, "Color",
+                    new Color(stop.R, stop.G, stop.B, stop.A), true, c =>
+                    {
+                        stop.R = c.r; stop.G = c.g; stop.B = c.b; stop.A = c.a;
+                        RepaintMarkers();
+                        Rebake();
+                        onChange?.Invoke();
+                    });
+
+                Button(editorHost.transform, "Remove this stop", () =>
+                {
+                    grad.Stops.Remove(stop);
+                    selected = null;
+                    Rebake();
+                    rebuildMarkers();
+                    rebuildEditor();
+                    onChange?.Invoke();
+                });
+            };
+
+            Button(parent, "+ Add stop", () =>
+            {
+                // Seed with the gradient's current end color so adding a stop doesn't
+                // visibly change the gradient.
+                var end = grad.Evaluate(1f);
+                var ns = new Bismuth.ColorStop { Progress = 1f, R = end.r, G = end.g, B = end.b, A = end.a };
+                grad.Stops.Add(ns);
+                SortStops();
+                selected = ns;
+                Rebake();
+                rebuildMarkers();
+                rebuildEditor();
+                onChange?.Invoke();
+            });
+
+            SortStops();
+            Rebake();
+            rebuildMarkers();
+            rebuildEditor();
         }
 
         // Color picker. Header (clickable to expand): arrow + label + HEX + swatch preview.
@@ -1273,6 +1687,7 @@ namespace Bismuth.UI
             bool hasAlpha,
             Action<Color> onChange)
         {
+            SettingsSearch.Register(label);
             var container = Rect("ColorPicker", parent);
             var clVlg = container.AddComponent<VerticalLayoutGroup>();
             clVlg.childControlWidth = true;
@@ -1555,6 +1970,7 @@ namespace Bismuth.UI
         // Auto-reverts after 3s on its own timer if not confirmed.
         public static GameObject DangerButton(Transform parent, string label, Action onConfirm)
         {
+            SettingsSearch.Register(label);
             var row = Row(parent);
             var bg = SolidImage(row, Theme.DangerBg);
             bg.raycastTarget = true;
@@ -1636,6 +2052,48 @@ namespace Bismuth.UI
             h.OnEnter = () => target.color = hover;
             h.OnExit = () => target.color = rest;
         }
+    }
+
+    // Eats wheel events. Lives on the dropdown blocker so scrolling outside the floating
+    // list doesn't scroll the page underneath it. (Everywhere else we deliberately AVOID
+    // IScrollHandler so events bubble to the page ScrollRect — see HoverHandler.)
+    internal class ScrollSwallower : MonoBehaviour, IScrollHandler
+    {
+        public void OnScroll(PointerEventData e) { }
+    }
+
+    // Gradient-strip stop handle: press selects, drag maps the pointer to a normalized
+    // position across the strip. Implementing IDragHandler also keeps the ScrollRect
+    // from stealing the gesture.
+    internal class GradientStopHandle : MonoBehaviour, IPointerDownHandler, IDragHandler
+    {
+        public RectTransform Strip;
+        public Action OnSelect;
+        public Action<float> OnMove;
+
+        public void OnPointerDown(PointerEventData e)
+        {
+            if (e.button != PointerEventData.InputButton.Left) return;
+            OnSelect?.Invoke();
+        }
+
+        public void OnDrag(PointerEventData e)
+        {
+            if (Strip == null) return;
+            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(Strip, e.position, e.pressEventCamera, out Vector2 local))
+                return;
+            float w = Strip.rect.width;
+            if (w <= 0f) return;
+            OnMove?.Invoke(Mathf.Clamp01(local.x / w + Strip.pivot.x));
+        }
+    }
+
+    // Frees a runtime-baked Texture2D when its host object is destroyed (gradient strips
+    // live on subpages that are torn down on every pop).
+    internal class TextureReleaser : MonoBehaviour
+    {
+        public Texture2D Tex;
+        private void OnDestroy() { if (Tex != null) UnityEngine.Object.Destroy(Tex); }
     }
 
     // Hover state notifier. Implements only the pointer enter/exit interfaces — does NOT

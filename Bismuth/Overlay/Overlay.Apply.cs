@@ -19,6 +19,16 @@ namespace Bismuth
             if (xaccRow != null)         xaccRow.SetActive(ovr && settings.ShowXAcc);
             if (bpmRow != null)          bpmRow.SetActive(ovr && settings.ShowBpm);
             if (tileBpmRow != null)      tileBpmRow.SetActive(ovr && settings.ShowTileBpm);
+            if (kpsRow != null)          kpsRow.SetActive(ovr && settings.ShowKps);
+            if (songDurRow != null)      songDurRow.SetActive(ovr && settings.ShowSongDuration);
+            if (levelDurRow != null)     levelDurRow.SetActive(ovr && settings.ShowLevelDuration);
+            if (bestRow != null)         bestRow.SetActive(ovr && settings.ShowBestProgress);
+            if (progressBarGo != null)
+            {
+                progressBarGo.SetActive(ovr && settings.ShowProgressBar);
+                ((RectTransform)progressBarGo.transform).sizeDelta =
+                    new Vector2(0f, Mathf.Max(1f, settings.ProgressBarHeight));
+            }
             if (timingScaleRow != null)  timingScaleRow.SetActive(ovr && settings.ShowTimingScale);
             if (judgementsRow != null)   judgementsRow.SetActive(ovr && settings.ShowJudgements);
             if (comboDisplayContainer != null)
@@ -117,6 +127,9 @@ namespace Bismuth
                     default:              px = 0.5f; childAlign = TextAnchor.MiddleCenter; break;
                 }
                 attemptsContainer.pivot = new Vector2(px, attemptsContainer.pivot.y);
+                // The anchor alone positions the block; clear any drift so the pivot
+                // math is exact.
+                attemptsContainer.anchoredPosition = Vector2.zero;
                 var avlg = attemptsContainer.GetComponent<VerticalLayoutGroup>();
                 if (avlg != null) avlg.childAlignment = childAlign;
             }
@@ -129,6 +142,8 @@ namespace Bismuth
                 var lr = (RectTransform)leftContainer;
                 lr.anchorMin = lr.anchorMax = new Vector2(settings.StatusLeftX, settings.StatusLeftY);
                 lr.anchoredPosition = Vector2.zero;
+                var lvlg = leftContainer.GetComponent<VerticalLayoutGroup>();
+                if (lvlg != null) lvlg.spacing = settings.StatRowSpacing;
             }
             if (rightContainer != null)
             {
@@ -136,12 +151,31 @@ namespace Bismuth
                 var rr = (RectTransform)rightContainer;
                 rr.anchorMin = rr.anchorMax = new Vector2(settings.StatusRightX, settings.StatusRightY);
                 rr.anchoredPosition = Vector2.zero;
+                var rvlg = rightContainer.GetComponent<VerticalLayoutGroup>();
+                if (rvlg != null) rvlg.spacing = settings.StatRowSpacing;
             }
             SetRow(progressRow, progressLabel, progressValue, settings.Scale);
             SetRow(accRow,      accLabel,      accValue,      settings.Scale);
             SetRow(xaccRow,     xaccLabel,     xaccValue,     settings.Scale);
             SetRow(bpmRow,      bpmLabel,      bpmValue,      settings.Scale);
             SetRow(tileBpmRow,  tileBpmLabel,  tileBpmValue,  settings.Scale);
+            SetRow(kpsRow,      kpsLabel,      kpsValue,      settings.Scale);
+            SetRow(songDurRow,  songDurLabel,  songDurValue,  settings.Scale);
+            SetRow(levelDurRow, levelDurLabel, levelDurValue, settings.Scale);
+            // Best is a normal stat row in a side panel, or a compact 18pt row when
+            // parked in the attempts block (matching the attempt counters).
+            if (settings.BestInAttempts)
+            {
+                var attemptsShadow = new Vector2(ShadowBaseOffset, -ShadowBaseOffset);
+                ApplyTextScale(bestLabel, 18, attemptsShadow);
+                ApplyTextScale(bestValue, 18, attemptsShadow);
+                var bestLe = bestRow != null ? bestRow.GetComponent<LayoutElement>() : null;
+                if (bestLe != null) bestLe.preferredHeight = 30f;
+            }
+            else
+            {
+                SetRow(bestRow, bestLabel, bestValue, settings.Scale);
+            }
 
             /* Master shadow pass: runs after the per-part blocks above so it has the
                final offsets. Combo label/count keep their dedicated colors. */
@@ -176,17 +210,28 @@ namespace Bismuth
             while (trail < sep.Length && sep[sep.Length - 1 - trail] == ' ') trail++;
             string visible = sep.Substring(0, sep.Length - trail);
 
-            SetRowSeparator(progressRow, progressLabel, "Progress",  visible, trail);
-            SetRowSeparator(accRow,      accLabel,      "Accuracy",  visible, trail);
-            SetRowSeparator(xaccRow,     xaccLabel,     "XAccuracy", visible, trail);
-            SetRowSeparator(bpmRow,      bpmLabel,      "BPM",       visible, trail);
-            SetRowSeparator(tileBpmRow,  tileBpmLabel,  "TBPM",      visible, trail);
+            SetRowSeparator(progressRow, progressLabel, LabelOr(settings.ProgressLabel, "Progress"),  visible, trail);
+            SetRowSeparator(accRow,      accLabel,      LabelOr(settings.AccLabel,      "Accuracy"),  visible, trail);
+            SetRowSeparator(xaccRow,     xaccLabel,     LabelOr(settings.XAccLabel,     "XAccuracy"), visible, trail);
+            SetRowSeparator(bpmRow,      bpmLabel,      LabelOr(settings.BpmLabel,      "BPM"),       visible, trail);
+            SetRowSeparator(tileBpmRow,  tileBpmLabel,  LabelOr(settings.TileBpmLabel,  "TBPM"),      visible, trail);
+            SetRowSeparator(kpsRow,      kpsLabel,      LabelOr(settings.KpsLabel,      "KPS"),       visible, trail);
+            SetRowSeparator(songDurRow,  songDurLabel,  LabelOr(settings.SongDurationLabel,  "Song Length"),  visible, trail);
+            SetRowSeparator(levelDurRow, levelDurLabel, LabelOr(settings.LevelDurationLabel, "Level Length"), visible, trail);
+            // Best uses the stat separator in a side panel, colon style in the attempts block.
+            if (settings.BestInAttempts)
+                SetRowSeparator(bestRow, bestLabel, LabelOr(settings.BestLabel, "Best"), ":", 1);
+            else
+                SetRowSeparator(bestRow, bestLabel, LabelOr(settings.BestLabel, "Best"), visible, trail);
 
             // Fixed-format rows keep their own separators but need same trailing-space treatment
             SetRowSeparator(attemptsRow,     attemptsLabel,     "Attempts",      ":", 1);
             SetRowSeparator(attemptsFullRow, attemptsFullLabel, "Full Attempts", ":", 1);
             SetRowSeparator(timingScaleRow,  timingScaleLabel,  "TimingScale",   " -", 1);
         }
+
+        private static string LabelOr(string overrideText, string fallback)
+            => string.IsNullOrEmpty(overrideText) ? fallback : overrideText;
 
         private static void SetRowSeparator(GameObject row, TextMeshProUGUI label, string baseText,
             string visibleSep, int trailingSpaces)
@@ -235,12 +280,26 @@ namespace Bismuth
             if (xaccRow != null)      xaccRow.transform.SetParent(null, false);
             if (bpmRow != null)       bpmRow.transform.SetParent(null, false);
             if (tileBpmRow != null)   tileBpmRow.transform.SetParent(null, false);
+            if (kpsRow != null)       kpsRow.transform.SetParent(null, false);
+            if (songDurRow != null)   songDurRow.transform.SetParent(null, false);
+            if (levelDurRow != null)  levelDurRow.transform.SetParent(null, false);
+            if (bestRow != null)      bestRow.transform.SetParent(null, false);
 
             Attach(progressRow,  settings.ProgressPosition);
             Attach(accRow,       settings.AccPosition);
             Attach(xaccRow,      settings.XAccPosition);
             Attach(bpmRow,       settings.BpmPosition);
             Attach(tileBpmRow,   settings.TileBpmPosition);
+            Attach(kpsRow,       settings.KpsPosition);
+            Attach(songDurRow,   settings.SongDurationPosition);
+            Attach(levelDurRow,  settings.LevelDurationPosition);
+            if (bestRow != null)
+            {
+                if (settings.BestInAttempts && attemptsContainer != null)
+                    bestRow.transform.SetParent(attemptsContainer, false);
+                else
+                    Attach(bestRow, settings.BestPosition);
+            }
         }
 
         private void Attach(GameObject row, OverlayPosition pos)

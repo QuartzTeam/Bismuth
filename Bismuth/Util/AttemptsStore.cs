@@ -54,6 +54,21 @@ namespace Bismuth
             Set(FullPrefix + key, value);
         }
 
+        /* Best progress (0..1) shares the int store as basis points (percent × 100). */
+        private const string BestPrefix = "B::";
+
+        public static float GetBest(string key)
+        {
+            return key == null ? 0f : Get(BestPrefix + key) / 10000f;
+        }
+
+        public static void SetBest(string key, float t)
+        {
+            if (key == null) return;
+            if (t < 0f) t = 0f; else if (t > 1f) t = 1f;
+            Set(BestPrefix + key, (int)(t * 10000f + 0.5f));
+        }
+
         /* One-time carry-over when a level's key scheme changes (e.g. path-based ->
            content hash). Moves both the regular and full-attempt entries from oldKey
            to newKey, but never clobbers an existing newKey. No-op if oldKey is null,
@@ -65,6 +80,7 @@ namespace Bismuth
             bool changed = false;
             changed |= Move(oldKey, newKey);
             changed |= Move(FullPrefix + oldKey, FullPrefix + newKey);
+            changed |= Move(BestPrefix + oldKey, BestPrefix + newKey);
             if (changed) Save();
         }
 

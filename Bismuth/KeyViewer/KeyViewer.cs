@@ -62,6 +62,9 @@ namespace Bismuth
         private readonly Dictionary<KeyCode, int>     _rainRowIndex = new Dictionary<KeyCode, int>();
         private readonly Dictionary<KeyCode, KvColor> _rainColors   = new Dictionary<KeyCode, KvColor>();
         private readonly HashSet<KeyCode>             _rainEnabled  = new HashSet<KeyCode>();
+        // Keys registered on a non-top row — accent-as-theme recolors only these (top-row
+        // rain stays white by design).
+        private readonly HashSet<KeyCode>             _lowerRowRainKeys = new HashSet<KeyCode>();
         // Ghost keys: spawn rain only — no key cell, not in _keyCells, no count++, no KPS/Total contribution.
         private readonly HashSet<KeyCode>             _ghostKeys    = new HashSet<KeyCode>();
         private readonly Dictionary<int, RectTransform>      _rainLayers   = new Dictionary<int, RectTransform>();
@@ -365,7 +368,9 @@ namespace Bismuth
             _rainColumns.Clear();
             _rainColors.Clear();
             _rainEnabled.Clear();
+            _lowerRowRainKeys.Clear();
             _ghostKeys.Clear();
+            _heldKeys.Clear();
             _rainX.Clear();
             _rainRowIndex.Clear();
             _rainLayers.Clear();

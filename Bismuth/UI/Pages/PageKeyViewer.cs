@@ -9,10 +9,10 @@ namespace Bismuth.UI.Pages
 {
     internal static class PageKeyViewer
     {
-        // Static state for the list/editor view swap. Page is built once per session
-        // by TabRail; these refs persist for the page lifetime.
-        private static GameObject _listView;
-        private static GameObject _editorView;
+        // Page-lifetime navigation state. The page is built once per session by TabRail;
+        // subpage bodies are (re)built by the PageStack on push/reveal.
+        private static PageStack _stack;
+        private static RectTransform _editorBody;   // current preset-editor body — drag-ghost host
         private static Action _listRebuildAll;
 
         // Rebind state: when a cell is right-clicked, we capture the next keydown into
@@ -21,30 +21,19 @@ namespace Bismuth.UI.Pages
         private static KeyListener _rebindListener;
         private static Action _rebindRebuild;
 
-        public static void Build(RectTransform content)
+        public static void Build(PageStack stack)
         {
+            _stack = stack;
             var s = UICore.Settings;
             var notify = UICore.OnSettingsChanged;
             Action rebuild = () => UICore.OnKeyViewerRebuild?.Invoke();
 
-            _listView = UIBuilder.Rect("ListView", content);
-            var lvlg = _listView.AddComponent<VerticalLayoutGroup>();
-            lvlg.childControlWidth = true;
-            lvlg.childControlHeight = true;
-            lvlg.childForceExpandWidth = true;
-            lvlg.childForceExpandHeight = false;
-            lvlg.spacing = 2f;
+            // Drop rebuild hooks accumulated by a previous panel build (force reload).
+            _listRebuildAll = null;
+            // Preset names can change while an editor subpage is open.
+            stack.OnRootRevealed = () => _listRebuildAll?.Invoke();
 
-            _editorView = UIBuilder.Rect("EditorView", content);
-            var evlg = _editorView.AddComponent<VerticalLayoutGroup>();
-            evlg.childControlWidth = true;
-            evlg.childControlHeight = true;
-            evlg.childForceExpandWidth = true;
-            evlg.childForceExpandHeight = false;
-            evlg.spacing = 2f;
-            _editorView.SetActive(false);
-
-            BuildListView(_listView.transform, s, notify, rebuild);
+            BuildListView(stack.Root, s, notify, rebuild);
         }
 
         private static void BuildListView(Transform parent, Settings s, Action notify, Action rebuild)
@@ -56,13 +45,23 @@ namespace Bismuth.UI.Pages
                 v => { s.HideKeyViewerInEditor = v; notify?.Invoke(); }, null);
             UIBuilder.Collapsible(parent, "Hide in main menu", s.HideKeyViewerInMainMenu,
                 v => { s.HideKeyViewerInMainMenu = v; notify?.Invoke(); }, null);
-            // Only show when the overlay font's family has multiple weights.
+            PageUI.BuildFontSelector(parent, "Font", UICore.AvailableFonts, s.KeyViewerFontName,
+                entry =>
+                {
+                    s.KeyViewerFontName = entry.Name;
+                    MainClass.ApplySelectedFont();
+                    notify?.Invoke();
+                    PageOverlay.RefreshFontWeightRows?.Invoke();
+                }, showWeightRow: false);
+            // Weight rows only show when the KV font's family has multiple weights.
             // NOTE: relies on the Overlay tab building first (it resets
             // PageOverlay.RefreshFontWeightRows at the top of its Build).
             PageOverlay.AddWeightRow(parent, "Label weight",
-                () => s.KeyViewerLabelWeight, v => s.KeyViewerLabelWeight = v);
+                () => s.KeyViewerLabelWeight, v => s.KeyViewerLabelWeight = v,
+                fontName: () => s.EffectiveKeyViewerFont);
             PageOverlay.AddWeightRow(parent, "Count weight",
-                () => s.KeyViewerCountWeight, v => s.KeyViewerCountWeight = v);
+                () => s.KeyViewerCountWeight, v => s.KeyViewerCountWeight = v,
+                fontName: () => s.EffectiveKeyViewerFont);
 
             UIBuilder.Spacer(parent);
             UIBuilder.SectionHeader(parent, "Hand");
@@ -102,7 +101,7 @@ namespace Bismuth.UI.Pages
                     BuildPresetRow(listGo.transform, isFoot, i, presets[i], s, notify, rebuild, listRebuild);
             };
             listRebuild();
-            // Combine all preset-list rebuilds so CloseEditor refreshes both hand and foot.
+            // Combine all preset-list rebuilds so returning to the root refreshes both hand and foot.
             _listRebuildAll = (_listRebuildAll ?? (Action)delegate { }) + listRebuild;
 
             string label = isFoot ? "+ Add Foot Preset" : "+ Add Hand Preset";
@@ -270,31 +269,16 @@ namespace Bismuth.UI.Pages
 
         private static void OpenEditor(KeyViewerPreset preset, bool isFoot, Settings s, Action notify, Action rebuild)
         {
-            // Tear down any prior editor contents (re-using the same container across
-            // presets keeps the page's parent layout stable).
-            for (int i = _editorView.transform.childCount - 1; i >= 0; i--)
-            {
-                var c = _editorView.transform.GetChild(i);
-                c.SetParent(null);
-                UnityEngine.Object.Destroy(c.gameObject);
-            }
-
-            BuildEditorContent(_editorView.transform, preset, isFoot, s, notify, rebuild);
-
-            _listView.SetActive(false);
-            _editorView.SetActive(true);
-        }
-
-        private static void CloseEditor()
-        {
-            _editorView.SetActive(false);
-            _listView.SetActive(true);
-            // Re-build preset lists in case names changed during editing.
-            _listRebuildAll?.Invoke();
+            // rebuildOnReveal: the row/cell submenus mutate the grid underneath, so the
+            // editor re-reads the preset when they pop back to it.
+            _stack.Push((isFoot ? "Foot / " : "Hand / ") + preset.Name,
+                body => BuildEditorContent(body, preset, isFoot, s, notify, rebuild),
+                rebuildOnReveal: true);
         }
 
         private static void BuildEditorContent(Transform parent, KeyViewerPreset preset, bool isFoot, Settings s, Action notify, Action rebuild)
         {
+            _editorBody = (RectTransform)parent;
             // Stale hook from a previously-opened editor would target destroyed objects;
             // clear before the rows section's initial rebuild fires it.
             _ghostRefresh = null;
@@ -302,48 +286,9 @@ namespace Bismuth.UI.Pages
             // Combined callback for structural fields. Cosmetic-only fields use notify.
             Action structural = () => { notify?.Invoke(); rebuild(); };
 
-            // Top bar: Back + title
-            var topRow = UIBuilder.Rect("TopRow", parent);
-            var topLe = topRow.AddComponent<LayoutElement>();
-            topLe.preferredHeight = 32f;
-            topLe.minHeight = 32f;
-            // Back button on the left
-            var backBtn = UIBuilder.Rect("Back", topRow.transform);
-            var backRect = (RectTransform)backBtn.transform;
-            backRect.anchorMin = new Vector2(0, 0.5f);
-            backRect.anchorMax = new Vector2(0, 0.5f);
-            backRect.pivot = new Vector2(0, 0.5f);
-            backRect.anchoredPosition = new Vector2(8f, 0);
-            backRect.sizeDelta = new Vector2(90f, 24f);
-            var backBg = backBtn.AddComponent<RoundedRectGraphic>();
-            backBg.Radius = 3f;
-            backBg.AAFringe = 0.5f;
-            backBg.color = Theme.ButtonBg;
-            backBg.raycastTarget = true;
-            var backLbl = UIBuilder.Rect("L", backBtn.transform);
-            var backLblRect = (RectTransform)backLbl.transform;
-            backLblRect.anchorMin = Vector2.zero;
-            backLblRect.anchorMax = Vector2.one;
-            backLblRect.offsetMin = Vector2.zero;
-            backLblRect.offsetMax = Vector2.zero;
-            var backTxt = UIBuilder.Tmp(backLbl, "← Back", (int)UIBuilder.LabelFontSize, TextAnchor.MiddleCenter, Theme.Text);
-            ClickHandler.Attach(backBtn, CloseEditor);
-
-            // Title text on the right of Back
-            var title = UIBuilder.Rect("Title", topRow.transform);
-            var titleRect = (RectTransform)title.transform;
-            titleRect.anchorMin = new Vector2(0, 0);
-            titleRect.anchorMax = new Vector2(1, 1);
-            titleRect.offsetMin = new Vector2(110f, 0);
-            titleRect.offsetMax = new Vector2(-8f, 0);
-            var titleTxt = UIBuilder.Tmp(title, "Editing " + (isFoot ? "Foot / " : "Hand / ") + preset.Name,
-                (int)UIBuilder.LabelFontSize, TextAnchor.MiddleLeft, Theme.TextMuted);
-
-            UIBuilder.Spacer(parent, 4f);
-
             // Name + Reset Counters
             UIBuilder.TextInput(parent, "Name", preset.Name ?? "",
-                v => { preset.Name = v; titleTxt.text = "Editing " + (isFoot ? "Foot / " : "Hand / ") + v; notify?.Invoke(); });
+                v => { preset.Name = v; _stack.RetitleTop((isFoot ? "Foot / " : "Hand / ") + v); notify?.Invoke(); });
             UIBuilder.DangerButton(parent, "Reset counters for this preset", () =>
             {
                 if (KeyViewer.Instance != null)
@@ -370,10 +315,12 @@ namespace Bismuth.UI.Pages
 
             UIBuilder.Spacer(parent);
             UIBuilder.SectionHeaderWithHelp(parent, "Rows",
-                "Click: edit label/width\n" +
+                "Rebind mode: click keys and press their new binds.\n" +
+                "Click: cell settings (bind, display text, width)\n" +
                 "Right Click: change key bind\n" +
                 "Drag: change key position\n" +
-                "Click ⚙ Settings on a row for height + rain options.");
+                "Click Settings on a row for height + rain options.");
+            BuildRebindModeButton(parent);
             BuildRowsSection(parent, preset, isFoot, s, notify, rebuild);
 
             UIBuilder.Spacer(parent);
@@ -607,6 +554,53 @@ namespace Bismuth.UI.Pages
             if (onClick != null) ClickHandler.Attach(go, onClick);
         }
 
+        // ── Rebind mode ────────────────────────────────────────────────────
+        // While on, clicking a cell arms it for rebinding (next keypress binds it)
+        // instead of opening its settings — bulk-friendly: click key, press bind, next.
+        private static bool _rebindMode;
+
+        private static void BuildRebindModeButton(Transform parent)
+        {
+            _rebindMode = false;
+            var row = UIBuilder.Row(parent);
+            var bg = UIBuilder.SolidImage(row, Theme.ButtonBg);
+            bg.raycastTarget = true;
+            var label = UIBuilder.Label(row.transform, "", (int)UIBuilder.LabelFontSize, TextAnchor.MiddleCenter, Theme.Text);
+
+            bool hover = false;
+            void Paint()
+            {
+                if (_rebindMode)
+                {
+                    var a = Theme.ToggleOn;
+                    bg.color = new Color(a.r, a.g, a.b, hover ? 0.5f : 0.35f);
+                    label.text = "Rebind mode ON — click a key, press its new bind. Click here to finish.";
+                }
+                else
+                {
+                    bg.color = hover ? Theme.ButtonHover : Theme.ButtonBg;
+                    label.text = "Rebind Keys";
+                }
+            }
+            Paint();
+
+            var h = row.AddComponent<HoverHandler>();
+            h.OnEnter = () => { hover = true; Paint(); };
+            h.OnExit = () => { hover = false; Paint(); };
+            ClickHandler.Attach(row, () =>
+            {
+                _rebindMode = !_rebindMode;
+                if (!_rebindMode)
+                {
+                    // Leaving the mode cancels any armed cell.
+                    _rebindCell = null;
+                    if (_rebindListener != null) _rebindListener.Active = false;
+                    _rebindRebuild?.Invoke();
+                }
+                Paint();
+            });
+        }
+
         // ── Rows section + cell grid ───────────────────────────────────────
 
         // Visual row grid: each row is a horizontal strip of cell buttons + a Row Settings
@@ -775,7 +769,7 @@ namespace Bismuth.UI.Pages
             lblRect.anchorMax = Vector2.one;
             lblRect.offsetMin = Vector2.zero;
             lblRect.offsetMax = Vector2.zero;
-            var txt = UIBuilder.Tmp(lblGo, "⚙ Settings", (int)UIBuilder.LabelFontSize - 1, TextAnchor.MiddleCenter, Theme.Text);
+            var txt = UIBuilder.Tmp(lblGo, "Settings", (int)UIBuilder.LabelFontSize - 1, TextAnchor.MiddleCenter, Theme.Text);
 
             ClickHandler.Attach(btn, () => OpenRowSubmenu(preset, isFoot, rowIdx, s, notify, rebuild));
         }
@@ -820,14 +814,21 @@ namespace Bismuth.UI.Pages
             txt.text = isRebinding ? "…"
                 : (!string.IsNullOrEmpty(cell.Label) ? cell.Label : KeyTokens.PrettyTokenLabel(cell.Token));
 
-            var ch = ClickHandler.Attach(btn, () => OpenKeySubmenu(preset, isFoot, rowIdx, cellIdx, s, notify, rebuild));
-            ch.OnRightClick = () =>
+            // Left click: cell settings, or arm-for-rebind while rebind mode is on.
+            // Right click: always arm-for-rebind.
+            Action armRebind = () =>
             {
                 // Cancel any prior pending rebind, then enter rebind state for this cell.
                 _rebindCell = cell;
                 _rebindListener.Active = true;
                 rebuildRows();
             };
+            var ch = ClickHandler.Attach(btn, () =>
+            {
+                if (_rebindMode) armRebind();
+                else OpenKeySubmenu(preset, isFoot, rowIdx, cellIdx, s, notify, rebuild);
+            });
+            ch.OnRightClick = armRebind;
 
             // Drag-reorder. Cross-row drops route through Preset.Rows lookup in the handler.
             var dr = btn.AddComponent<CellDragReorder>();
@@ -835,7 +836,7 @@ namespace Bismuth.UI.Pages
             dr.Row = preset.Rows[rowIdx];
             dr.Preset = preset;
             dr.CellsContainer = (RectTransform)parent;
-            dr.GhostHost = (RectTransform)_editorView.transform;
+            dr.GhostHost = _editorBody;
             // After reorder: rebuild the editor's grid AND fire the live KeyViewer rebuild
             // so the overlay reflects the new cell order immediately.
             dr.OnReorder = () =>
@@ -923,43 +924,36 @@ namespace Bismuth.UI.Pages
         }
 
         // ── Submenus ───────────────────────────────────────────────────────
+        // Pushed on top of the editor view; the editor rebuilds on reveal, so deletes and
+        // reorders show up when Back pops to it.
 
-        // Each submenu rebuilds the editor view in-place. "Back" returns to the preset editor.
         private static void OpenRowSubmenu(
             KeyViewerPreset preset, bool isFoot, int rowIdx,
             Settings s, Action notify, Action rebuild)
         {
-            for (int i = _editorView.transform.childCount - 1; i >= 0; i--)
+            _stack.Push("Row " + (rowIdx + 1), body =>
             {
-                var c = _editorView.transform.GetChild(i);
-                c.SetParent(null);
-                UnityEngine.Object.Destroy(c.gameObject);
-            }
-            BuildSubmenuTopBar(_editorView.transform,
-                title: "Editing " + (isFoot ? "Foot / " : "Hand / ") + preset.Name + " / Row " + (rowIdx + 1),
-                onBack: () => OpenEditor(preset, isFoot, s, notify, rebuild));
+                var row = preset.Rows[rowIdx];
 
-            var row = preset.Rows[rowIdx];
+                UIBuilder.SectionHeader(body, "Row");
+                UIBuilder.Slider(body, "Height", row.Height, 30f, 200f,
+                    v => { row.Height = v; notify?.Invoke(); rebuild(); }, "0", 1f);
+                UIBuilder.Collapsible(body, "Show rain", row.ShowRain,
+                    v => { row.ShowRain = v; notify?.Invoke(); rebuild(); }, null);
 
-            UIBuilder.Spacer(_editorView.transform);
-            UIBuilder.SectionHeader(_editorView.transform, "Row");
-            UIBuilder.Slider(_editorView.transform, "Height", row.Height, 30f, 200f,
-                v => { row.Height = v; notify?.Invoke(); rebuild(); }, "0", 1f);
-            UIBuilder.Collapsible(_editorView.transform, "Show rain", row.ShowRain,
-                v => { row.ShowRain = v; notify?.Invoke(); rebuild(); }, null);
+                EnsureKv(ref row.RainColor, 1, 1, 1, 1);
+                BindKv(body, "Rain color", row.RainColor, notify);
 
-            EnsureKv(ref row.RainColor, 1, 1, 1, 1);
-            BindKv(_editorView.transform, "Rain color", row.RainColor, notify);
-
-            UIBuilder.Spacer(_editorView.transform);
-            bool canDelete = preset.Rows.Count > 1;
-            UIBuilder.Button(_editorView.transform, canDelete ? "Delete this row" : "Delete this row (last row — disabled)", () =>
-            {
-                if (!canDelete) return;
-                preset.Rows.RemoveAt(rowIdx);
-                notify?.Invoke();
-                rebuild();
-                OpenEditor(preset, isFoot, s, notify, rebuild);
+                UIBuilder.Spacer(body);
+                bool canDelete = preset.Rows.Count > 1;
+                UIBuilder.Button(body, canDelete ? "Delete this row" : "Delete this row (last row — disabled)", () =>
+                {
+                    if (!canDelete) return;
+                    preset.Rows.RemoveAt(rowIdx);
+                    notify?.Invoke();
+                    rebuild();
+                    _stack.Pop();
+                });
             });
         }
 
@@ -967,98 +961,83 @@ namespace Bismuth.UI.Pages
             KeyViewerPreset preset, bool isFoot, int rowIdx, int cellIdx,
             Settings s, Action notify, Action rebuild)
         {
-            for (int i = _editorView.transform.childCount - 1; i >= 0; i--)
+            _stack.Push("Row " + (rowIdx + 1) + " / Cell " + (cellIdx + 1), body =>
             {
-                var c = _editorView.transform.GetChild(i);
-                c.SetParent(null);
-                UnityEngine.Object.Destroy(c.gameObject);
-            }
-            var cell = preset.Rows[rowIdx].Cells[cellIdx];
+                var cell = preset.Rows[rowIdx].Cells[cellIdx];
 
-            BuildSubmenuTopBar(_editorView.transform,
-                title: "Editing " + (isFoot ? "Foot / " : "Hand / ") + preset.Name
-                    + " / Row " + (rowIdx + 1) + " / Cell " + (cellIdx + 1),
-                onBack: () => OpenEditor(preset, isFoot, s, notify, rebuild));
+                UIBuilder.SectionHeader(body, "Key");
 
-            UIBuilder.Spacer(_editorView.transform);
-            UIBuilder.SectionHeader(_editorView.transform, "Key");
+                // Bound-key display
+                var tokenRow = UIBuilder.Rect("Token", body);
+                var tokenLe = tokenRow.AddComponent<LayoutElement>();
+                tokenLe.preferredHeight = UIBuilder.RowHeight;
+                tokenLe.minHeight = UIBuilder.RowHeight;
+                var tokenLblGo = UIBuilder.Rect("Lbl", tokenRow.transform);
+                var tokenLblRect = (RectTransform)tokenLblGo.transform;
+                tokenLblRect.anchorMin = new Vector2(0, 0);
+                tokenLblRect.anchorMax = new Vector2(0, 1);
+                tokenLblRect.pivot = new Vector2(0, 0.5f);
+                tokenLblRect.sizeDelta = new Vector2(140f, 0);
+                tokenLblRect.anchoredPosition = new Vector2(8f, 0);
+                UIBuilder.Tmp(tokenLblGo, "Bound key", (int)UIBuilder.LabelFontSize, TextAnchor.MiddleLeft, Theme.Text);
+                var tokenValGo = UIBuilder.Rect("Val", tokenRow.transform);
+                var tokenValRect = (RectTransform)tokenValGo.transform;
+                tokenValRect.anchorMin = new Vector2(1, 0);
+                tokenValRect.anchorMax = new Vector2(1, 1);
+                tokenValRect.pivot = new Vector2(1, 0.5f);
+                tokenValRect.sizeDelta = new Vector2(220f, 0);
+                tokenValRect.anchoredPosition = new Vector2(-8f, 0);
+                UIBuilder.Tmp(tokenValGo, KeyTokens.PrettyTokenLabel(cell.Token), (int)UIBuilder.LabelFontSize, TextAnchor.MiddleRight, Theme.TextMuted);
 
-            // Token display (read-only — rebind via right-click in the row grid)
-            var tokenRow = UIBuilder.Rect("Token", _editorView.transform);
-            var tokenLe = tokenRow.AddComponent<LayoutElement>();
-            tokenLe.preferredHeight = UIBuilder.RowHeight;
-            tokenLe.minHeight = UIBuilder.RowHeight;
-            var tokenLblGo = UIBuilder.Rect("Lbl", tokenRow.transform);
-            var tokenLblRect = (RectTransform)tokenLblGo.transform;
-            tokenLblRect.anchorMin = new Vector2(0, 0);
-            tokenLblRect.anchorMax = new Vector2(0, 1);
-            tokenLblRect.pivot = new Vector2(0, 0.5f);
-            tokenLblRect.sizeDelta = new Vector2(140f, 0);
-            tokenLblRect.anchoredPosition = new Vector2(8f, 0);
-            var tokenLbl = UIBuilder.Tmp(tokenLblGo, "Token", (int)UIBuilder.LabelFontSize, TextAnchor.MiddleLeft, Theme.Text);
-            var tokenValGo = UIBuilder.Rect("Val", tokenRow.transform);
-            var tokenValRect = (RectTransform)tokenValGo.transform;
-            tokenValRect.anchorMin = new Vector2(1, 0);
-            tokenValRect.anchorMax = new Vector2(1, 1);
-            tokenValRect.pivot = new Vector2(1, 0.5f);
-            tokenValRect.sizeDelta = new Vector2(220f, 0);
-            tokenValRect.anchoredPosition = new Vector2(-8f, 0);
-            var tokenVal = UIBuilder.Tmp(tokenValGo, KeyTokens.PrettyTokenLabel(cell.Token), (int)UIBuilder.LabelFontSize, TextAnchor.MiddleRight, Theme.TextMuted);
+                /* In-page rebind. The editor's rebind listener sits on the (now hidden)
+                   editor view whose Update doesn't run, so the subpage carries its own.
+                   A tester renamed every cell via the Label field believing it rebinds —
+                   the binding needs a first-class control here, not just row right-click. */
+                var listener = UIBuilder.Rect("CellRebindListener", body).AddComponent<KeyListener>();
+                TMPro.TextMeshProUGUI bindBtnLabel = null;
+                const string bindPrompt = "Change key — click, then press the new key";
+                var bindBtn = UIBuilder.Button(body, bindPrompt, () =>
+                {
+                    listener.Active = true;
+                    if (bindBtnLabel != null) bindBtnLabel.text = "Press a key… (Esc cancels)";
+                });
+                bindBtnLabel = bindBtn.GetComponentInChildren<TMPro.TextMeshProUGUI>();
+                listener.OnKey = kc =>
+                {
+                    listener.Active = false;
+                    if (kc == KeyCode.Escape)
+                    {
+                        if (bindBtnLabel != null) bindBtnLabel.text = bindPrompt;
+                        return;
+                    }
+                    // Same ordering as the row-grid rebind: swap the token first so
+                    // TransferKeyCount's "old key still in use" scan sees the new binding.
+                    bool hadOld = KeyViewer.TryParseKey(cell.Token, out KeyCode oldKey);
+                    cell.Token = KeyTokens.TokenFromKeyCode(kc);
+                    cell.Label = null; // clear stale display override
+                    if (hadOld && KeyViewer.Instance != null)
+                        KeyViewer.Instance.TransferKeyCount(preset, oldKey, kc);
+                    notify?.Invoke();
+                    rebuild();
+                    _stack.RefreshTop(); // re-render bound key + cleared display text
+                };
 
-            UIBuilder.TextInput(_editorView.transform, "Label", cell.Label ?? "",
-                v => { cell.Label = string.IsNullOrEmpty(v) ? null : v; notify?.Invoke(); rebuild(); });
+                UIBuilder.TextInput(body, "Display text", cell.Label ?? "",
+                    v => { cell.Label = string.IsNullOrEmpty(v) ? null : v; notify?.Invoke(); rebuild(); });
 
-            UIBuilder.Slider(_editorView.transform, "Width", cell.WidthMul, 0.25f, 4f,
-                v => { cell.WidthMul = v; notify?.Invoke(); rebuild(); }, "0.00");
+                UIBuilder.Slider(body, "Width", cell.WidthMul, 0.25f, 4f,
+                    v => { cell.WidthMul = v; notify?.Invoke(); rebuild(); }, "0.00");
 
-            UIBuilder.Spacer(_editorView.transform);
-            UIBuilder.Button(_editorView.transform, "Delete this cell", () =>
-            {
-                preset.Rows[rowIdx].Cells.RemoveAt(cellIdx);
-                notify?.Invoke();
-                rebuild();
-                OpenEditor(preset, isFoot, s, notify, rebuild);
+                UIBuilder.Spacer(body);
+                UIBuilder.Button(body, "Delete this cell", () =>
+                {
+                    preset.Rows[rowIdx].Cells.RemoveAt(cellIdx);
+                    notify?.Invoke();
+                    rebuild();
+                    _stack.Pop();
+                });
             });
         }
-
-        // Shared top bar for sub-menus: Back button + title text.
-        private static void BuildSubmenuTopBar(Transform parent, string title, Action onBack)
-        {
-            var topRow = UIBuilder.Rect("TopRow", parent);
-            var topLe = topRow.AddComponent<LayoutElement>();
-            topLe.preferredHeight = 32f;
-            topLe.minHeight = 32f;
-
-            var backBtn = UIBuilder.Rect("Back", topRow.transform);
-            var backRect = (RectTransform)backBtn.transform;
-            backRect.anchorMin = new Vector2(0, 0.5f);
-            backRect.anchorMax = new Vector2(0, 0.5f);
-            backRect.pivot = new Vector2(0, 0.5f);
-            backRect.anchoredPosition = new Vector2(8f, 0);
-            backRect.sizeDelta = new Vector2(90f, 24f);
-            var backBg = backBtn.AddComponent<RoundedRectGraphic>();
-            backBg.Radius = 3f;
-            backBg.AAFringe = 0.5f;
-            backBg.color = Theme.ButtonBg;
-            backBg.raycastTarget = true;
-            var backLbl = UIBuilder.Rect("L", backBtn.transform);
-            var backLblRect = (RectTransform)backLbl.transform;
-            backLblRect.anchorMin = Vector2.zero;
-            backLblRect.anchorMax = Vector2.one;
-            backLblRect.offsetMin = Vector2.zero;
-            backLblRect.offsetMax = Vector2.zero;
-            var backTxt = UIBuilder.Tmp(backLbl, "← Back", (int)UIBuilder.LabelFontSize, TextAnchor.MiddleCenter, Theme.Text);
-            ClickHandler.Attach(backBtn, onBack);
-
-            var titleGo = UIBuilder.Rect("Title", topRow.transform);
-            var titleRect = (RectTransform)titleGo.transform;
-            titleRect.anchorMin = new Vector2(0, 0);
-            titleRect.anchorMax = new Vector2(1, 1);
-            titleRect.offsetMin = new Vector2(110f, 0);
-            titleRect.offsetMax = new Vector2(-8f, 0);
-            var titleTxt = UIBuilder.Tmp(titleGo, title, (int)UIBuilder.LabelFontSize, TextAnchor.MiddleLeft, Theme.TextMuted);
-        }
-
 
         // KvColor binding helpers — convert KvColor ↔ Color for the ColorPicker.
         private static void EnsureKv(ref KvColor c, float r, float g, float b, float a)

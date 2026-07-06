@@ -33,6 +33,7 @@ namespace Bismuth
             _lastProgressT = -1f;
             _lastBpm = -1f;
             _lastTileBpmVal = -1f;
+            _lastKpsVal = -1f;
             _lastTimingScale = -1f;
             _lastComboDisplay = -1;
 
@@ -113,6 +114,12 @@ namespace Bismuth
             }
             _currentLevelKey = key ?? _currentLevelKey;
             inLevel = true;
+            // Best-% only advances on real from-0% attempts; reload it per level so the
+            // row always shows this level's record.
+            PersistBest();
+            _isFullAttempt = !fromCheckpoint && !RDC.auto;
+            _bestPct = AttemptsStore.GetBest(_currentLevelKey);
+            UpdateBestText();
             // Reuse OnAttempt so checkpoint sync from Awake_Rewind isn't wiped here
             OnAttempt();
             if (attemptsValue != null) attemptsValue.text = _attempts.ToString();
@@ -142,6 +149,16 @@ namespace Bismuth
         public void OnLevelEnd()
         {
             inLevel = false;
+            PersistBest();
+        }
+
+        // Best-% writes are deferred to attempt boundaries — AttemptsStore rewrites its
+        // file on every Set, so per-frame persistence would thrash it.
+        private void PersistBest()
+        {
+            if (!_bestDirty || _currentLevelKey == null) return;
+            _bestDirty = false;
+            AttemptsStore.SetBest(_currentLevelKey, _bestPct);
         }
 
         public void ShowEmpty()
@@ -149,6 +166,7 @@ namespace Bismuth
             _lastProgressT = -1f;
             _lastBpm = -1f;
             _lastTileBpmVal = -1f;
+            _lastKpsVal = -1f;
             _lastTimingScale = -1f;
             _lastComboDisplay = -1;
 
@@ -162,6 +180,17 @@ namespace Bismuth
             if (xaccValue != null)     { xaccValue.text     = "--.--%"; xaccValue.color     = Dim; }
             if (bpmValue != null)      { bpmValue.text      = "---";    bpmValue.color      = Dim; }
             if (tileBpmValue != null)      { tileBpmValue.text      = "---";    tileBpmValue.color      = Dim; }
+            if (kpsValue != null)          { kpsValue.text          = "---";    kpsValue.color          = Dim; }
+            // Durations recompute lazily each attempt — cheap, and self-corrects when the
+            // level or pitch changed since the last attempt.
+            _songDurTotal = -1f;
+            _levelDurTotal = -1f;
+            _lastSongElapsed = -1;
+            _lastLevelElapsed = -1;
+            if (songDurValue != null)      { songDurValue.text      = "-:--";   songDurValue.color      = Dim; }
+            if (levelDurValue != null)     { levelDurValue.text     = "-:--";   levelDurValue.color     = Dim; }
+            _lastBarT = -1f;
+            if (progressBarFill != null) progressBarFill.anchorMax = new Vector2(0f, 1f);
             if (timingScaleValue != null)  { timingScaleValue.text  = "---%";   timingScaleValue.color  = Dim; }
             for (int i = 0; i < _judgementCounts.Length; i++) _judgementCounts[i] = 0;
             if (judgementTexts != null)
@@ -173,10 +202,33 @@ namespace Bismuth
         {
             _attempts = 0;
             _fullAttempts = 0;
+            _bestPct = 0f;
+            _bestDirty = false;
             AttemptsStore.Set(_currentLevelKey, 0);
             AttemptsStore.SetFull(_currentLevelKey, 0);
+            AttemptsStore.SetBest(_currentLevelKey, 0f);
             if (attemptsValue != null) attemptsValue.text = "0";
             if (attemptsFullValue != null) attemptsFullValue.text = "0";
+            UpdateBestText();
+        }
+
+        // Force-reload triage: dump the canvas show-condition terms + font health of a
+        // few representative texts (destroyed assets compare == null via Unity's operator).
+        internal void DumpDebug(string tag)
+        {
+            try
+            {
+                var s = MainClass.Settings;
+                bool paused = false;
+                try { paused = scrController.instance != null && scrController.instance.paused; } catch { }
+                string F(TextMeshProUGUI t) =>
+                    t == null ? "text-null" : t.font == null ? "FONT-DESTROYED" : t.font.name;
+                BismuthLog.Debug(
+                    $"[overlay] {tag}: inLevel={inLevel} canvasActive={(canvas != null ? canvas.gameObject.activeSelf.ToString() : "canvas-null")}" +
+                    $" hideAll={s?.ActiveHideAllUI} paused={paused} ctrl={(scrController.instance != null)}" +
+                    $" progress={F(progressValue)} combo={F(comboDisplayValue)} attempts={F(attemptsValue)}");
+            }
+            catch (System.Exception e) { BismuthLog.Debug("[overlay] dump failed: " + e.Message); }
         }
 
         /* labelFont/valueFont override stat rows label/value texts, and
@@ -202,6 +254,14 @@ namespace Bismuth
             if (bpmValue != null)       bpmValue.font       = vf;
             if (tileBpmLabel != null)       tileBpmLabel.font       = lf;
             if (tileBpmValue != null)       tileBpmValue.font       = vf;
+            if (kpsLabel != null)           kpsLabel.font           = lf;
+            if (kpsValue != null)           kpsValue.font           = vf;
+            if (songDurLabel != null)       songDurLabel.font       = lf;
+            if (songDurValue != null)       songDurValue.font       = vf;
+            if (levelDurLabel != null)      levelDurLabel.font      = lf;
+            if (levelDurValue != null)      levelDurValue.font      = vf;
+            if (bestLabel != null)          bestLabel.font          = lf;
+            if (bestValue != null)          bestValue.font          = vf;
             if (timingScaleLabel != null)    timingScaleLabel.font    = lf;
             if (timingScaleValue != null)    timingScaleValue.font    = vf;
             if (comboDisplayLabel != null)   comboDisplayLabel.font   = comboLabelFont ?? font;

@@ -45,9 +45,15 @@ namespace Bismuth
         // avoiding the ambiguity in SkyHookKeyToUnityKey (multiple KeyCodes share one label slot).
         private static readonly HashSet<ushort> _allowedLabels = new HashSet<ushort>();
 
-        // Raw HID Usage ID → Unity KeyCode fallback for when SkyHook reports KeyLabel.Unknown.
-        // Native bundle uses USB HID keyboard usage codes (page 0x07). Observed values for modifiers:
-        // 0xE1 LShift, 0xE5 RShift, etc. — confirmed via diagnostic logging.
+        // Raw-key → Unity KeyCode fallback for when SkyHook reports KeyLabel.Unknown.
+        // The raw byte's meaning is PER PLATFORM and the spaces collide (0x39 = HID
+        // CapsLock vs VK '9'), so EnsureReflection picks the table:
+        //  - macOS native bundle: USB HID usage IDs (page 0x07) — modifiers confirmed
+        //    via diagnostic logging (0xE1 LShift, 0xE5 RShift, …).
+        //  - Windows build (incl. Proton): Win32 VK codes — confirmed via a Proton
+        //    tester's diagnostics (0x42 'B', 0xA2 VK_LCONTROL, …).
+        private static Dictionary<ushort, KeyCode> _rawToKeyCode;
+
         private static readonly Dictionary<ushort, KeyCode> _hidToKeyCode = new Dictionary<ushort, KeyCode>
         {
             { 0x39, KeyCode.CapsLock },
@@ -60,6 +66,58 @@ namespace Bismuth
             { 0xE6, KeyCode.RightAlt },
             { 0xE7, KeyCode.RightCommand },
         };
+
+        private static Dictionary<ushort, KeyCode> BuildVkMap()
+        {
+            var m = new Dictionary<ushort, KeyCode>
+            {
+                { 0x08, KeyCode.Backspace },
+                { 0x09, KeyCode.Tab },
+                { 0x0D, KeyCode.Return },
+                { 0x14, KeyCode.CapsLock },
+                { 0x1B, KeyCode.Escape },
+                { 0x20, KeyCode.Space },
+                { 0x21, KeyCode.PageUp },
+                { 0x22, KeyCode.PageDown },
+                { 0x23, KeyCode.End },
+                { 0x24, KeyCode.Home },
+                { 0x25, KeyCode.LeftArrow },
+                { 0x26, KeyCode.UpArrow },
+                { 0x27, KeyCode.RightArrow },
+                { 0x28, KeyCode.DownArrow },
+                { 0x2D, KeyCode.Insert },
+                { 0x2E, KeyCode.Delete },
+                { 0x5B, KeyCode.LeftCommand },   // VK_LWIN
+                { 0x5C, KeyCode.RightCommand },  // VK_RWIN
+                { 0x6A, KeyCode.KeypadMultiply },
+                { 0x6B, KeyCode.KeypadPlus },
+                { 0x6D, KeyCode.KeypadMinus },
+                { 0x6E, KeyCode.KeypadPeriod },
+                { 0x6F, KeyCode.KeypadDivide },
+                { 0xA0, KeyCode.LeftShift },
+                { 0xA1, KeyCode.RightShift },
+                { 0xA2, KeyCode.LeftControl },
+                { 0xA3, KeyCode.RightControl },
+                { 0xA4, KeyCode.LeftAlt },
+                { 0xA5, KeyCode.RightAlt },
+                { 0xBA, KeyCode.Semicolon },     // VK_OEM_1
+                { 0xBB, KeyCode.Equals },
+                { 0xBC, KeyCode.Comma },
+                { 0xBD, KeyCode.Minus },
+                { 0xBE, KeyCode.Period },
+                { 0xBF, KeyCode.Slash },         // VK_OEM_2
+                { 0xC0, KeyCode.BackQuote },     // VK_OEM_3
+                { 0xDB, KeyCode.LeftBracket },
+                { 0xDC, KeyCode.Backslash },
+                { 0xDD, KeyCode.RightBracket },
+                { 0xDE, KeyCode.Quote },         // VK_OEM_7
+            };
+            for (int i = 0; i < 10; i++) m[(ushort)(0x30 + i)] = KeyCode.Alpha0 + i;
+            for (int i = 0; i < 26; i++) m[(ushort)(0x41 + i)] = KeyCode.A + i;
+            for (int i = 0; i < 10; i++) m[(ushort)(0x60 + i)] = KeyCode.Keypad0 + i;
+            for (int i = 0; i < 12; i++) m[(ushort)(0x70 + i)] = KeyCode.F1 + i;
+            return m;
+        }
 
         private static void EnsureReflection()
         {
@@ -82,14 +140,86 @@ namespace Bismuth
             _unityToAsync     = mapper      != null ? AccessTools.Method(mapper, "UnityKeyToSkyHookKey")  : null;
             _asyncToUnity     = mapper      != null ? AccessTools.Method(mapper, "SkyHookKeyToUnityKey")  : null;
 
-            var bsType        = AccessTools.TypeByName("ButtonState");
-            _stateDown        = bsType      != null ? System.Enum.ToObject(bsType, 0) : (object)0;
+            _bsType           = AccessTools.TypeByName("ButtonState");
+            _stateDown        = _bsType     != null ? System.Enum.ToObject(_bsType, 0) : (object)0;
+
+            var plat = Application.platform;
+            _rawToKeyCode = plat == RuntimePlatform.WindowsPlayer || plat == RuntimePlatform.WindowsEditor
+                ? BuildVkMap()
+                : _hidToKeyCode;
 
             _reflReady = true;
         }
 
+        private static System.Type _bsType;
+
+        // Resolve one GetStateKeys entry to a Unity KeyCode: direct KeyCode, SkyHook
+        // label mapping, then the raw-key fallback table. KeyCode.None = unresolvable.
+        private static KeyCode ResolveEntry(object val)
+        {
+            if (val is KeyCode directKc) return directKc;
+            if (_asyncKcType == null || val.GetType() != _asyncKcType || _asyncKcLabel == null)
+                return KeyCode.None;
+
+            object label = _asyncKcLabel.GetValue(val);
+            if (label == null) return KeyCode.None;
+            ushort labelVal = (ushort)System.Convert.ToInt32(label);
+            if (labelVal != 119 /* KeyLabel.Unknown */ && _asyncToUnity != null)
+            {
+                var resolved = _asyncToUnity.Invoke(null, new object[] { label });
+                if (resolved != null)
+                {
+                    int kc = System.Convert.ToInt32(resolved);
+                    if (kc != (int)KeyCode.None) return (KeyCode)kc;
+                }
+            }
+            if (_asyncKcKey != null)
+            {
+                ushort raw = (ushort)System.Convert.ToInt32(_asyncKcKey.GetValue(val));
+                if (_rawToKeyCode.TryGetValue(raw, out KeyCode mapped)) return mapped;
+            }
+            return KeyCode.None;
+        }
+
+        /* Bismuth's own key observation (rebind capture, KV rain/counting) reads the
+           game's async press lists ALONGSIDE legacy Input polling: a Proton/X11 tester's
+           diagnostics proved legacy Input.GetKeyDown is blind there while SkyHook keeps
+           resolving every key. ButtonState: WentDown=0, WentUp=1, IsDown=2. */
+        internal const int StateWentDown = 0;
+        internal const int StateWentUp   = 1;
+        internal const int StateIsDown   = 2;
+
+        internal static void CollectStateKeys(int state, HashSet<KeyCode> into)
+        {
+            EnsureReflection();
+            if (_getStateKeys == null || _anyKcValue == null || _bsType == null) return;
+
+            object bs;
+            try { bs = System.Enum.ToObject(_bsType, state); }
+            catch { return; }
+
+            _inCount = true; // GetStateKeys re-enters GetMain; keep the postfix out of the way
+            IList list;
+            try   { list = _getStateKeys.Invoke(null, new object[] { bs }) as IList; }
+            catch { list = null; }
+            finally { _inCount = false; }
+            if (list == null) return;
+
+            for (int i = 0; i < list.Count; i++)
+            {
+                object val = _anyKcValue.GetValue(list[i]);
+                if (val == null) continue;
+                var kc = ResolveEntry(val);
+                if (kc != KeyCode.None) into.Add(kc);
+            }
+        }
+
         internal static void Apply(Settings settings)
         {
+            // Re-arm the per-session press diagnostics on every apply, so a tester can
+            // refresh the log window by touching any setting before pressing keys.
+            _pressDiagLeft = 24;
+
             _active = settings.KeyLimiterEnabled;
             _blockWhileOpen = settings.BlockInputsWhileMenuOpen;
             _chatterActive = settings.ChatterBlockerEnabled;
@@ -127,8 +257,26 @@ namespace Bismuth
                 }
             }
 
-            BismuthLog.Debug($"KeyLimiter.Apply: enabled={_active} useKv={settings.KeyLimiterUseKvKeys} hand={(settings.Hand?.Name ?? "<null>")} foot={(settings.Foot?.Name ?? "<null>")} allowed=[{string.Join(",", _allowed)}] labels={_allowedLabels.Count}");
+            // Fail-safe: an empty allowed set would block EVERY key — never a sensible
+            // intent (a tester enabled custom-keys mode with nothing listed and bricked
+            // gameplay). Treat it as limiter-off until keys exist.
+            if (_allowed.Count == 0)
+            {
+                _active = false;
+                BismuthLog.Debug("KeyLimiter.Apply: allowed set is empty — limiter treated as disabled");
+            }
+
+            // Apply fires on every settings notify (incl. per-tick slider drags) — only
+            // log when the effective state actually changed.
+            string state = $"KeyLimiter.Apply: enabled={_active} useKv={settings.KeyLimiterUseKvKeys} hand={(settings.Hand?.Name ?? "<null>")} foot={(settings.Foot?.Name ?? "<null>")} allowed=[{string.Join(",", _allowed)}] labels={_allowedLabels.Count}";
+            if (state != _lastApplyLog)
+            {
+                _lastApplyLog = state;
+                BismuthLog.Debug(state);
+            }
         }
+
+        private static string _lastApplyLog;
 
         private static IEnumerable<KeyCode> GetKvKeys(Settings settings)
         {
@@ -167,9 +315,15 @@ namespace Bismuth
         // Counts keys in the game's press list this frame that pass our filters (KeyLimiter
         // allowed-set + ChatterBlocker). Uses GetStateKeys (the game's own source, immune to
         // async timing) and is idempotent within a frame (chatter state is frame-cached).
+        // entryCount/anyResolved report how much of the press list we could even identify —
+        // the caller fails open when nothing resolves (platform key tables differ; a Linux
+        // tester had every press eaten because SkyHook labels didn't match ours).
         private static bool _inCount;
-        private static int CountAllowedInPressedKeys()
+        private static int _pressDiagLeft = 16; // one-time per-session press dump for ports
+        private static int CountAllowedInPressedKeys(out int entryCount, out bool anyResolved)
         {
+            entryCount = 0;
+            anyResolved = false;
             EnsureReflection();
             if (_getStateKeys == null || _anyKcValue == null) return 0;
 
@@ -179,6 +333,7 @@ namespace Bismuth
             finally { _inCount = false; }
 
             if (list == null) return 0;
+            entryCount = list.Count;
 
             if (_chatterActive && _chatterFrame != Time.frameCount)
             {
@@ -204,6 +359,12 @@ namespace Bismuth
                     int ki = (int)directKc;
                     isMouse = (ki >= (int)KeyCode.Mouse0 && ki <= (int)KeyCode.Mouse6);
                     allowed = isMouse || _allowed.Contains(directKc);
+                    anyResolved = true;
+                    if (_pressDiagLeft > 0)
+                    {
+                        _pressDiagLeft--;
+                        BismuthLog.Debug($"KeyLimiter press: direct kc={directKc} allowed={allowed}");
+                    }
                 }
                 else if (_asyncKcType != null && val.GetType() == _asyncKcType && _asyncKcLabel != null)
                 {
@@ -223,15 +384,28 @@ namespace Bismuth
                         allowed = _allowedLabels.Contains(labelVal);
                     }
 
-                    // HID raw-key fallback (native bundle reports modifiers as label=Unknown).
-                    if (resolvedKey == KeyCode.None && _asyncKcKey != null)
+                    // Raw-key fallback (platform table) for label=Unknown entries.
+                    ushort rawKey = 0;
+                    if (_asyncKcKey != null)
+                        rawKey = (ushort)System.Convert.ToInt32(_asyncKcKey.GetValue(val));
+                    if (resolvedKey == KeyCode.None && rawKey != 0
+                        && _rawToKeyCode.TryGetValue(rawKey, out KeyCode mapped))
                     {
-                        ushort raw = (ushort)System.Convert.ToInt32(_asyncKcKey.GetValue(val));
-                        if (_hidToKeyCode.TryGetValue(raw, out KeyCode mapped))
-                        {
-                            resolvedKey = mapped;
-                            if (!allowed) allowed = _allowed.Contains(mapped);
-                        }
+                        resolvedKey = mapped;
+                    }
+
+                    // Label mismatch tolerance: if the native bundle's label for a key
+                    // differs from what UnityKeyToSkyHookKey predicted (seen per-platform),
+                    // the label check fails even though we KNOW the key — trust the
+                    // resolved identity when it's in the allowed set.
+                    if (!allowed && resolvedKey != KeyCode.None)
+                        allowed = _allowed.Contains(resolvedKey);
+
+                    if (resolvedKey != KeyCode.None) anyResolved = true;
+                    if (_pressDiagLeft > 0)
+                    {
+                        _pressDiagLeft--;
+                        BismuthLog.Debug($"KeyLimiter press: async label={labelVal} raw=0x{rawKey:X2} resolved={resolvedKey} allowed={allowed}");
                     }
                 }
 
@@ -305,12 +479,29 @@ namespace Bismuth
                 return t != null ? AccessTools.Method(t, "GetMain") : null;
             }
 
+            private static bool _failOpenLogged;
+
             public static void Postfix(ButtonState __0, ref int __result)
             {
                 if (BlockInputs && __0 == ButtonState.WentDown) { __result = 0; return; }
                 // Skip when re-entering (GetStateKeys calls GetMain internally)
                 if ((!_active && !_chatterActive && _ghosts.Count == 0) || __result == 0 || __0 != ButtonState.WentDown || _inCount) return;
-                __result = Mathf.Min(__result, CountAllowedInPressedKeys());
+
+                int allowed = CountAllowedInPressedKeys(out int entries, out bool anyResolved);
+                // Fail open: the game reports presses but not one of them resolved to a key
+                // identity we know. That means this platform's press entries don't match our
+                // label/HID tables (hit on Linux SkyHook) — filtering would eat every input,
+                // so leave the game's count untouched rather than brick gameplay.
+                if (entries > 0 && !anyResolved)
+                {
+                    if (!_failOpenLogged)
+                    {
+                        _failOpenLogged = true;
+                        BismuthLog.Log("KeyLimiter: press entries unrecognized on this platform — failing open (limiter/chatter inactive). Please report with the [dbg] 'KeyLimiter press' lines.");
+                    }
+                    return;
+                }
+                __result = Mathf.Min(__result, allowed);
             }
         }
 

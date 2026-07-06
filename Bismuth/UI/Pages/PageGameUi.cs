@@ -7,7 +7,8 @@ namespace Bismuth.UI.Pages
 {
     // Game-HUD layout + game-text repaint settings. The on-screen drag editor and the
     // per-element list below it both drive the same GameUiLayout overrides; global
-    // game-text (font/sizes/title weight) lives in its own section.
+    // game-text (font/sizes/title weight) lives in its own section. Each element row
+    // drills into its own subpage (ring on the row = visible).
     internal static class PageGameUi
     {
         // text=true → the element is a single Text, so it gets weight + alignment controls.
@@ -21,7 +22,6 @@ namespace Bismuth.UI.Pages
             ("countdown",    "Countdown",      true),
             ("difficulty",   "Difficulty",     false),
             ("modifiers",    "Modifiers",      false),
-            ("pause",        "Pause Button",   false),
             ("autoplay",     "Autoplay Text",  true),
         };
 
@@ -33,17 +33,22 @@ namespace Bismuth.UI.Pages
         // Level name sits near the top center; a tighter range than the layout elements.
         private const float LevelNameRange = 500f;
 
+        private static PageStack _stack;
         private static GameObject _elementsHost;
         private static GameObject _titleWeightHost;
 
-        public static void Build(RectTransform content)
+        public static void Build(PageStack stack)
         {
+            _stack = stack;
             var s = UICore.Settings;
+            var content = stack.Root;
+            // A subpage's "Reset to default" can clear an element's Hidden flag — re-tint
+            // the cards whenever a subpage pops back to the root.
+            stack.OnRootRevealed = RebuildElements;
 
             // ── Layout ─────────────────────────────────────────────────────
-            UIBuilder.SectionHeader(content, "Layout");
-            UIBuilder.Description(content,
-                "Drag and resize elements directly on screen. Precise controls can be done using menus below.");
+            UIBuilder.SectionHeaderWithHelp(content, "Layout",
+                "Drag and resize elements directly on screen.\nPrecise controls live in each element's page under Elements.");
             UIBuilder.Button(content, "Edit game UI on screen", GameUiEditor.Open);
             UIBuilder.DangerButton(content, "Reset layout to Bismuth defaults", () =>
             {
@@ -73,7 +78,6 @@ namespace Bismuth.UI.Pages
                     MainClass.ApplySelectedFont();
                     UICore.OnSettingsChanged?.Invoke();
                     RebuildTitleWeightRow();
-                    RebuildElements();
                     if (optionsHost != null) optionsHost.SetActive(true);
                 },
                 defaultOption: "Game default",
@@ -83,25 +87,13 @@ namespace Bismuth.UI.Pages
                     s.GameTextUseOverlayFont = false;
                     GameFontApplier.Reapply(); // restores originals
                     UICore.OnSettingsChanged?.Invoke();
-                    RebuildElements();
                     if (optionsHost != null) optionsHost.SetActive(false);
                 });
 
-            optionsHost = UIBuilder.Rect("GameTextOptions", content);
-            var ovlg = optionsHost.AddComponent<VerticalLayoutGroup>();
-            ovlg.childControlWidth = true;
-            ovlg.childControlHeight = true;
-            ovlg.childForceExpandWidth = true;
-            ovlg.childForceExpandHeight = false;
-            ovlg.spacing = 2f;
+            optionsHost = UIBuilder.VGroup(content, "GameTextOptions");
             var optBody = optionsHost.transform;
 
-            _titleWeightHost = UIBuilder.Rect("TitleWeightHost", optBody);
-            var twvlg = _titleWeightHost.AddComponent<VerticalLayoutGroup>();
-            twvlg.childControlWidth = true;
-            twvlg.childControlHeight = true;
-            twvlg.childForceExpandWidth = true;
-            twvlg.childForceExpandHeight = false;
+            _titleWeightHost = UIBuilder.VGroup(optBody, "TitleWeightHost", 0f);
             RebuildTitleWeightRow();
 
             UIBuilder.Slider(optBody, "Game text size", s.GameTextScale, 0.4f, 1.5f, v =>
@@ -124,72 +116,78 @@ namespace Bismuth.UI.Pages
 
             // ── Elements ───────────────────────────────────────────────────
             UIBuilder.Spacer(content);
-            UIBuilder.SectionHeader(content, "Elements");
-            _elementsHost = UIBuilder.Rect("ElementsHost", content);
-            var evlg = _elementsHost.AddComponent<VerticalLayoutGroup>();
-            evlg.childControlWidth = true;
-            evlg.childControlHeight = true;
-            evlg.childForceExpandWidth = true;
-            evlg.childForceExpandHeight = false;
-            evlg.spacing = 2f;
+            UIBuilder.SectionHeaderWithHelp(content, "Elements",
+                "Click a card to show or hide that game element\n(highlighted = shown).\nClick the ··· button on a card for position, scale,\nweight and alignment.\nJudgements, Level Name and Error Meter can't be\ntoggled here — hide them from the Hide UI tab.");
+            _elementsHost = UIBuilder.VGroup(content, "ElementsHost");
             RebuildElements();
         }
 
-        // One expandable row per HUD element. Rebuilt when the game font changes so the
-        // weight dropdowns appear/disappear with the family's available weights.
+        // One card per HUD element: tinted card = visible (click toggles), corner ⚙ →
+        // subpage. Rebuilt after the reset-layout buttons and on root reveal so the tints
+        // re-read the Hidden overrides. Subpage bodies read weights/values at push time,
+        // so they're always current.
         private static void RebuildElements()
         {
             if (_elementsHost == null) return;
             ClearChildren(_elementsHost);
-
-            var s = UICore.Settings;
-            List<string> weights = s.GameTextUseOverlayFont ? GameFamilyWeights(s) : null;
-            if (weights != null && weights.Count <= 1) weights = null;
+            var grid = UIBuilder.CardGrid(_elementsHost.transform).transform;
 
             foreach (var (key, label, text) in LayoutElements)
             {
-                string k = key; bool t = text; var w = weights;
-                // Header radio = visible. Off hides the element (CanvasGroup on its wrapper);
-                // the title still expands the position/scale/weight/align controls below.
+                string k = key; string l = label; bool t = text;
                 bool visible = !(GameUiLayout.GetOverride(k, false)?.Hidden ?? false);
-                UIBuilder.Collapsible(_elementsHost.transform, label, visible,
+                UIBuilder.NavCard(grid, l, visible,
                     v =>
                     {
                         GameUiLayout.GetOverride(k, true).Hidden = !v;
                         GameUiLayout.ApplyOne(k);
                         UICore.OnSettingsChanged?.Invoke();
                     },
-                    body => BuildLayoutBody(body, k, t, w));
+                    () => _stack.Push(l, body => BuildLayoutBody(body, k, t)),
+                    "position, scale, weight, align, reset");
             }
             // Judgements (size + weight) and Level Name (Bismuth-owned X/Y/Scale + weight)
-            // have no GameUiOverride transform, so they get their own bodies.
-            var jw = weights;
-            UIBuilder.ExpandSection(_elementsHost.transform, "Judgements", body => BuildJudgementsBody(body, jw));
-            UIBuilder.ExpandSection(_elementsHost.transform, "Level Name", body => BuildLevelNameBody(body, jw));
-            UIBuilder.ExpandSection(_elementsHost.transform, "Error Meter", BuildMeterBody);
+            // have no GameUiOverride transform / hide flag, so their whole card navigates.
+            UIBuilder.NavCard(grid, "Judgements",
+                () => _stack.Push("Judgements", BuildJudgementsBody), "size, weight");
+            UIBuilder.NavCard(grid, "Level Name",
+                () => _stack.Push("Level Name", BuildLevelNameBody), "position, scale, weight, song title");
+            UIBuilder.NavCard(grid, "Error Meter",
+                () => _stack.Push("Error Meter", BuildMeterBody), "override position, scale, reset, hitmeter");
+        }
+
+        // Muted pointer to the Hide UI tab, for elements whose visibility isn't owned here.
+        private static void HideUiNote(Transform body, string toggleName)
+        {
+            var row = UIBuilder.Row(body, 22f);
+            var t = UIBuilder.Label(row.transform, "Visibility lives in Hide UI → " + toggleName,
+                (int)UIBuilder.LabelFontSize - 2, TextAnchor.MiddleLeft, Theme.TextMuted);
+            t.rectTransform.offsetMin = new Vector2(8f, 0);
         }
 
         // Pooled hit-judgement popups: size (GameJudgementScale) + family weight.
-        private static void BuildJudgementsBody(Transform body, List<string> weights)
+        private static void BuildJudgementsBody(Transform body)
         {
             var s = UICore.Settings;
+            HideUiNote(body, "Hide judgements");
             UIBuilder.Slider(body, "Size", s.GameJudgementScale, 0.5f, 3f,
                 v => { s.GameJudgementScale = v; GameFontApplier.RequestResize(); }, "0.00");
-            WeightDropdown(body, "judgement", weights);
+            WeightDropdown(body, "judgement", ActiveWeights());
         }
 
         // Level name's transform is owned by Bismuth (ApplyLevelNameTransform), not a
         // GameUiOverride, so X/Y/Scale write the LevelName* settings directly.
-        private static void BuildLevelNameBody(Transform body, List<string> weights)
+        private static void BuildLevelNameBody(Transform body)
         {
             var s = UICore.Settings;
+            HideUiNote(body, "Song title");
             UIBuilder.Slider(body, "Position X", s.LevelNameX, -LevelNameRange, LevelNameRange,
                 v => { s.LevelNameX = v; Overlay.Instance?.ApplyLevelNameTransform(); }, "0", 1f);
             UIBuilder.Slider(body, "Position Y", s.LevelNameY, -LevelNameRange, LevelNameRange,
                 v => { s.LevelNameY = v; Overlay.Instance?.ApplyLevelNameTransform(); }, "0", 1f);
             UIBuilder.Slider(body, "Scale", s.LevelNameScale, 0.1f, 3f,
                 v => { s.LevelNameScale = v; Overlay.Instance?.ApplyLevelNameTransform(); }, "0.00");
-            WeightDropdown(body, "levelname", weights);
+            WeightDropdown(body, "levelname", ActiveWeights());
         }
 
         // Shared "Auto + family weights" dropdown for a GameUiTextWeight key. No-op when
@@ -211,9 +209,8 @@ namespace Bismuth.UI.Pages
             });
         }
 
-        private static void BuildLayoutBody(Transform body, string key, bool text, List<string> weights)
+        private static void BuildLayoutBody(Transform body, string key, bool text)
         {
-            var s = UICore.Settings;
             var o = GameUiLayout.GetOverride(key, create: false);
             float offX = o != null ? o.OffX : 0f;
             float offY = o != null ? o.OffY : 0f;
@@ -226,10 +223,10 @@ namespace Bismuth.UI.Pages
             UIBuilder.Slider(body, "Scale", scale, 0.1f, 5f,
                 v => { GameUiLayout.GetOverride(key, true).Scale = v; GameUiLayout.ApplyOne(key); }, "0.00");
 
-            if (text) WeightDropdown(body, key, weights);
-
             if (text)
             {
+                WeightDropdown(body, key, ActiveWeights());
+
                 int align = o != null && o.Align >= 0 ? o.Align : (int)TextAlign.Center;
                 UIBuilder.Segmented(body, "Align", align, AlignLabels, i =>
                 {
@@ -242,14 +239,15 @@ namespace Bismuth.UI.Pages
             UIBuilder.DangerButton(body, "Reset to default", () =>
             {
                 GameUiLayout.ResetToDefault(key);
-                RebuildElements();
                 UICore.OnSettingsChanged?.Invoke();
+                _stack.RefreshTop(); // sliders re-read the reset values
             });
         }
 
         private static void BuildMeterBody(Transform body)
         {
             var s = UICore.Settings;
+            HideUiNote(body, "Hit error meter");
             // X/Y/Scale only take effect while the override is on.
             UIBuilder.Collapsible(body, "Override position", s.GameErrorMeterOverride,
                 v => { s.GameErrorMeterOverride = v; UICore.OnSettingsChanged?.Invoke(); }, null);
@@ -264,9 +262,19 @@ namespace Bismuth.UI.Pages
             UIBuilder.DangerButton(body, "Reset to default", () =>
             {
                 GameUiLayout.ResetMeter();
-                RebuildElements();
                 UICore.OnSettingsChanged?.Invoke();
+                _stack.RefreshTop();
             });
+        }
+
+        // Weights for the current game font, or null when the swap is off / the family
+        // has one weight — computed fresh at subpage-push time.
+        private static List<string> ActiveWeights()
+        {
+            var s = UICore.Settings;
+            if (!s.GameTextUseOverlayFont) return null;
+            var weights = GameFamilyWeights(s);
+            return weights.Count <= 1 ? null : weights;
         }
 
         // Weights available in the game-font family, canonically sorted.

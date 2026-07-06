@@ -8,14 +8,17 @@ namespace Bismuth
         {
             GameFontApplier.Tick();
             GameUiLayout.Tick();
+            Tweaks.TickTileAngle();
             if (inLevel && scrController.instance == null)
                 inLevel = false;
 
             var settings = MainClass.Settings;
             bool showOverlayStats = settings.ShowOverlay &&
                 (settings.ShowProgress || settings.ShowAttempts || settings.ShowFullAttempts ||
-                 settings.ShowAcc || settings.ShowXAcc || settings.ShowBpm || settings.ShowTileBpm ||
-                 settings.ShowTimingScale || settings.ShowJudgements);
+                 settings.ShowBestProgress || settings.ShowAcc || settings.ShowXAcc ||
+                 settings.ShowBpm || settings.ShowTileBpm || settings.ShowKps ||
+                 settings.ShowSongDuration || settings.ShowLevelDuration ||
+                 settings.ShowProgressBar || settings.ShowTimingScale || settings.ShowJudgements);
             bool paused = scrController.instance?.paused ?? false;
             bool show = _editMode ||
                 (inLevel && !paused && !settings.ActiveHideAllUI && (showOverlayStats || settings.ShowComboDisplay));
@@ -50,7 +53,7 @@ namespace Bismuth
                     float ct = settings.ComboGradientMax > 0f
                         ? Mathf.Clamp01(_combo / settings.ComboGradientMax)
                         : 0f;
-                    comboDisplayValue.color = settings.ComboGradient?.Evaluate(ct) ?? Color.white;
+                    comboDisplayValue.color = settings.ActiveComboGradient?.Evaluate(ct) ?? Color.white;
                 }
             }
 
@@ -75,6 +78,7 @@ namespace Bismuth
                 _lastProgressT = -1f;
                 _lastBpm = -1f;
                 _lastTileBpmVal = -1f;
+                _lastKpsVal = -1f;
                 _lastTimingScale = -1f;
             }
 
@@ -90,11 +94,23 @@ namespace Bismuth
                 {
                     _lastProgressT = tQ;
                     progressValue.text = tQ >= 1f ? "100%" : (tQ * 100f).ToString(fmt) + "%";
-                    progressValue.color = settings.ProgressGradient?.Evaluate(tQ) ?? Color.white;
+                    progressValue.color = settings.ActiveProgressGradient?.Evaluate(tQ) ?? Color.white;
                 }
             }
 
-            if ((settings.ShowBpm || settings.ShowTileBpm) && scrConductor.instance != null)
+            if (settings.ShowProgressBar && progressBarFill != null)
+            {
+                float t = Mathf.Clamp01(scrController.instance.percentComplete);
+                if (t != _lastBarT)
+                {
+                    _lastBarT = t;
+                    progressBarFill.anchorMax = new Vector2(t, 1f);
+                    if (progressBarFillImg != null)
+                        progressBarFillImg.color = ProgressBarFillColor(settings, t);
+                }
+            }
+
+            if ((settings.ShowBpm || settings.ShowTileBpm || settings.ShowKps) && scrConductor.instance != null)
             {
                 float pitch = scrConductor.instance.song != null ? scrConductor.instance.song.pitch : 1f;
                 float bpm = scrConductor.instance.bpm * (float)scrController.instance.playerOne.planetarySystem.speed * pitch;
@@ -105,11 +121,11 @@ namespace Bismuth
                     {
                         _lastBpm = bpm;
                         bpmValue.text = TrimZeros(bpm.ToString(fmt));
-                        bpmValue.color = settings.BpmGradient?.Evaluate(bpm / 10000f) ?? Color.white;
+                        bpmValue.color = settings.ActiveBpmGradient?.Evaluate(bpm / 10000f) ?? Color.white;
                     }
                 }
 
-                if (tileBpmValue != null && settings.ShowTileBpm)
+                if (settings.ShowTileBpm || settings.ShowKps)
                 {
                     if (Time.time - _lastTileBpmTime >= 0.01666f)
                     {
@@ -119,11 +135,20 @@ namespace Bismuth
                             : bpm;
                         _lastTileBpmTime = Time.time;
                     }
-                    if (_lastTileBpm != _lastTileBpmVal)
+                    if (tileBpmValue != null && settings.ShowTileBpm && _lastTileBpm != _lastTileBpmVal)
                     {
                         _lastTileBpmVal = _lastTileBpm;
                         tileBpmValue.text = TrimZeros(_lastTileBpm.ToString(fmt));
                         tileBpmValue.color = settings.ActiveTileBpmGradient?.Evaluate(_lastTileBpm / 10000f) ?? Color.white;
+                    }
+                    // KPS = tile hits per second = TBPM / 60. The gradient is evaluated in
+                    // the same t-domain as Tile BPM (tbpm/10000) so "Use colors from
+                    // Tile BPM" matches that row's color exactly.
+                    if (kpsValue != null && settings.ShowKps && _lastTileBpm != _lastKpsVal)
+                    {
+                        _lastKpsVal = _lastTileBpm;
+                        kpsValue.text = TrimZeros((_lastTileBpm / 60f).ToString(fmt));
+                        kpsValue.color = settings.ActiveKpsGradient?.Evaluate(_lastTileBpm / 10000f) ?? Color.white;
                     }
                 }
             }
@@ -142,6 +167,128 @@ namespace Bismuth
                     }
                 }
             }
+
+            // Duration rows: "elapsed/total" (e.g. 0:31/3:34). Totals computed lazily once
+            // the clip/floors exist; everything scales by pitch so it reads as real
+            // playback time. Both rows share ONE clock — the chart clock the game measures
+            // entryTimes against — so their current time ticks in step (audio position vs
+            // chart time are offset by the song intro and flip seconds at different
+            // moments, which read as "out of sync" side by side).
+            if ((settings.ShowSongDuration || settings.ShowLevelDuration) && scrConductor.instance != null)
+            {
+                var cond = scrConductor.instance;
+                float pitch = cond.song != null ? cond.song.pitch : 1f;
+                if (pitch <= 0f) pitch = 1f;
+                float tReal = Mathf.Max(0f, (float)cond.songposition_minusi / pitch);
+
+                // Once the clock passes a total, show exactly the total's rounded text —
+                // flooring against a rounded total left the last second unreachable
+                // (7.6s total displayed 0:08 but elapsed capped at floor(7.6) = 0:07).
+                int ElapsedFor(float total) =>
+                    tReal >= total ? Mathf.RoundToInt(total) : Mathf.FloorToInt(tReal);
+
+                if (settings.ShowSongDuration && songDurValue != null)
+                {
+                    var clip = cond.song != null ? cond.song.clip : null;
+                    // Songless levels: hide the row entirely instead of a stuck "-:--"
+                    // (ApplySettings re-activates it on settings edits; this re-hides).
+                    bool wantRow = clip != null && settings.ShowOverlay;
+                    if (songDurRow != null && songDurRow.activeSelf != wantRow)
+                        songDurRow.SetActive(wantRow);
+                    if (clip != null && _songDurTotal < 0f)
+                    {
+                        _songDurTotal = clip.length / pitch;
+                        _songDurTotalText = FormatDuration(_songDurTotal);
+                        _lastSongElapsed = -1;
+                    }
+                    if (_songDurTotal >= 0f)
+                    {
+                        int e = ElapsedFor(_songDurTotal);
+                        if (e != _lastSongElapsed)
+                        {
+                            _lastSongElapsed = e;
+                            songDurValue.text = FormatDuration(e) + "/" + _songDurTotalText;
+                            songDurValue.color = Color.white;
+                        }
+                    }
+                }
+
+                if (settings.ShowLevelDuration && levelDurValue != null)
+                {
+                    if (_levelDurTotal < 0f)
+                    {
+                        // Chart length = last floor's entry time (seconds of song time).
+                        var floors = ADOBase.lm != null ? ADOBase.lm.listFloors : null;
+                        var last = floors != null && floors.Count > 0 ? floors[floors.Count - 1] : null;
+                        if (last != null)
+                        {
+                            _levelDurTotal = (float)last.entryTime / pitch;
+                            _levelDurTotalText = FormatDuration(_levelDurTotal);
+                            _lastLevelElapsed = -1;
+                        }
+                    }
+                    if (_levelDurTotal >= 0f)
+                    {
+                        int e = ElapsedFor(_levelDurTotal);
+                        if (e != _lastLevelElapsed)
+                        {
+                            _lastLevelElapsed = e;
+                            levelDurValue.text = FormatDuration(e) + "/" + _levelDurTotalText;
+                            levelDurValue.color = Color.white;
+                        }
+                    }
+                }
+            }
+
+            // Best % — only full (from-0%) attempts advance it. Quantized like the progress
+            // row so the text isn't rebuilt every frame of a record run.
+            if (_isFullAttempt)
+            {
+                float bp = Mathf.Floor(Mathf.Clamp01(scrController.instance.percentComplete) * 10000f) / 10000f;
+                if (bp > _bestPct)
+                {
+                    _bestPct = bp;
+                    _bestDirty = true;
+                    UpdateBestText();
+                }
+            }
+        }
+
+        private void UpdateBestText()
+        {
+            if (bestValue == null) return;
+            var s = MainClass.Settings;
+            bestValue.text = _bestPct >= 1f ? "100%" : (_bestPct * 100f).ToString("F" + s.Precision) + "%";
+            bestValue.color = Color.white;
+        }
+
+        // Per-style fill color. Style 1 (default): white fill; the progress gradient's
+        // perfect color still fires at 100%. Theme mode overrides: solid fill in the
+        // theme's 100% color throughout (user call — no ramp). Styles 2/3 reserved.
+        private static Color ProgressBarFillColor(Settings s, float t)
+        {
+            switch (s.ProgressBarStyle)
+            {
+                default:
+                    var g = s.ActiveProgressGradient;
+                    if (s.AccentAsTheme && g != null && g.HasPerfectColor)
+                        return new Color(g.PR, g.PG, g.PB, g.PA);
+                    if (t >= 1f && g != null && g.HasPerfectColor)
+                        return new Color(g.PR, g.PG, g.PB, g.PA);
+                    return Color.white;
+            }
+        }
+
+        private static string FormatDuration(float seconds)
+        {
+            if (float.IsNaN(seconds) || float.IsInfinity(seconds) || seconds < 0f) return "-:--";
+            int total = Mathf.RoundToInt(seconds);
+            int h = total / 3600;
+            int m = (total % 3600) / 60;
+            int s = total % 60;
+            return h > 0
+                ? h + ":" + m.ToString("00") + ":" + s.ToString("00")
+                : m + ":" + s.ToString("00");
         }
 
         public void UpdateDisplay(float percentAcc, float percentXAcc, HitMargin margin)
@@ -193,7 +340,7 @@ namespace Bismuth
                         float a = trackers[i]?.percentAcc ?? 0f;
                         bool alive = players != null && i < players.Length && players[i] != null && players[i].alive;
                         bool dead = mixedState && !alive;
-                        Color c = dead ? deadColor : (s.AccGradient?.Evaluate(a) ?? Color.white);
+                        Color c = dead ? deadColor : (s.ActiveAccGradient?.Evaluate(a) ?? Color.white);
                         sb.Append("<color=#").Append(ColorUtility.ToHtmlStringRGBA(c)).Append('>');
                         sb.Append((a * 100f).ToString(fmt)).Append('%');
                         if (dead) sb.Append(" (dead)");
@@ -206,7 +353,7 @@ namespace Bismuth
                 {
                     float a = trackers[0]?.percentAcc ?? 0f;
                     accValue.text = (a * 100f).ToString(fmt) + "%";
-                    accValue.color = s.AccGradient?.Evaluate(a) ?? Color.white;
+                    accValue.color = s.ActiveAccGradient?.Evaluate(a) ?? Color.white;
                 }
             }
             if (includeAccuracy && xaccValue != null && playerCount > 0)

@@ -103,7 +103,7 @@ namespace Bismuth
                 _needFit = true;
             }
 
-            string text = _src.text;
+            string text = GameTextShadow.SanitizeColorTags(_src.text);
             if (text != _lastText) { _tmp.text = text; _lastText = text; _needFit = true; }
 
             Color color = _src.color;

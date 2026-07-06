@@ -49,7 +49,6 @@ namespace Bismuth
             new TargetDef { Key = "countdown",    Label = "Countdown",      Get = () => Rect(Uic?.txtCountdown) },
             new TargetDef { Key = "difficulty",   Label = "Difficulty",     Get = () => Uic?.difficultyContainer },
             new TargetDef { Key = "modifiers",    Label = "Modifiers",      Get = () => Uic?.modifiersContainer },
-            new TargetDef { Key = "pause",        Label = "Pause Button",   Get = () => Rect(Uic?.pauseButton) },
             new TargetDef { Key = "autoplay",     Label = "Autoplay Text",  Get = AutoplayText },
         };
 

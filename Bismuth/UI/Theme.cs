@@ -19,7 +19,8 @@ namespace Bismuth.UI
         public static readonly Color ToggleOff   = new Color(1f, 1f, 1f, 0.18f);
         public static readonly Color ButtonBg    = new Color(1f, 1f, 1f, 0.08f);
         public static readonly Color ButtonHover = new Color(1f, 1f, 1f, 0.14f);
-        public static readonly Color CloseHover  = new Color(0.886f, 0.404f, 0.427f, 1f);
+        // Windows-close red (#E81123) — the titlebar × floods this on hover.
+        public static readonly Color CloseHover  = new Color(0.910f, 0.067f, 0.137f, 1f);
         // Destructive-action button palette: subtle red tint at rest, brighter on hover,
         // brightest while armed (waiting for the confirmation click).
         public static readonly Color DangerBg    = new Color(0.886f, 0.404f, 0.427f, 0.12f);

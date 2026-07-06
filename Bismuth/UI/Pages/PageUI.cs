@@ -7,14 +7,14 @@ namespace Bismuth.UI.Pages
 {
     internal static class PageUI
     {
-        public static void Build(RectTransform content)
+        public static void Build(PageStack stack)
         {
+            var content = stack.Root;
             var s = UICore.Settings;
 
             // Bismuth-element on-screen position editor (moved from the old Locations tab).
-            UIBuilder.SectionHeader(content, "Locations");
-            UIBuilder.Description(content,
-                "Drag elements directly on screen to adjust positions");
+            UIBuilder.SectionHeaderWithHelp(content, "Locations",
+                "Drag elements directly on screen to adjust positions.");
             UIBuilder.Button(content, "Edit positions on screen", LocationEditor.Open);
             UIBuilder.DangerButton(content, "Reset all positions", () =>
             {
@@ -38,19 +38,10 @@ namespace Bismuth.UI.Pages
 
             UIBuilder.Spacer(content);
             UIBuilder.SectionHeader(content, "Font");
-            var fonts = UICore.AvailableFonts;
-
-            BuildFontSelector(content, "Panel font", fonts, s.UiFontName,
+            // Overlay fonts live on the Overlay tab (master + apply-to-all) and next to
+            // their part's weight rows (stats / combo / key viewer).
+            BuildFontSelector(content, "Panel font", UICore.AvailableFonts, s.UiFontName,
                 entry => UICore.ApplyFont(entry));
-            BuildFontSelector(content, "Overlay font", fonts, s.FontName,
-                entry =>
-                {
-                    s.FontName = entry.Name;
-                    MainClass.ApplySelectedFont();
-                    UICore.OnSettingsChanged?.Invoke();
-                    // Stat weight rows on the Overlay tab depend on this family.
-                    PageOverlay.RefreshFontWeightRows?.Invoke();
-                });
 
             UIBuilder.Spacer(content);
             UIBuilder.SectionHeader(content, "Accent");
@@ -64,6 +55,14 @@ namespace Bismuth.UI.Pages
                 s.UiAccentCustom = v;
                 swatchRow.SetActive(!v);
                 pickerRow.SetActive(v);
+            }, null);
+
+            // Theme mode: the accent generates one gradient that replaces every stat/combo
+            // gradient and the key viewer's default rain color (evaluate-time override —
+            // the saved gradients survive toggling).
+            UIBuilder.Collapsible(content, "Apply accent as theme color", s.AccentAsTheme, v => {
+                s.AccentAsTheme = v;
+                UICore.OnSettingsChanged?.Invoke();
             }, null);
 
             swatchRow.SetActive(!s.UiAccentCustom);
@@ -92,11 +91,14 @@ namespace Bismuth.UI.Pages
         // multiple weights, rebuilt on each family change). Internal: PageGameUi reuses it.
         // defaultOption prepends a sentinel family (e.g. "Game default") that fires onDefault
         // instead of apply and clears the weight row; defaultSelected starts on it.
+        // showWeightRow=false drops the base-weight sub-row (used where dedicated per-part
+        // weight rows already exist) — family changes then land on Regular/lightest.
         internal static void BuildFontSelector(
             Transform parent, string label,
             IList<FontLoader.FontEntry> fonts, string currentName,
             Action<FontLoader.FontEntry> apply,
-            string defaultOption = null, bool defaultSelected = false, Action onDefault = null)
+            string defaultOption = null, bool defaultSelected = false, Action onDefault = null,
+            bool showWeightRow = true)
         {
             if (fonts == null || fonts.Count == 0)
             {
@@ -158,6 +160,7 @@ namespace Bismuth.UI.Pages
             Action<int, string> rebuildWeights = null;
             rebuildWeights = (famIdx, preferredWeight) =>
             {
+                if (!showWeightRow) return;
                 for (int i = weightHost.transform.childCount - 1; i >= 0; i--)
                 {
                     var c = weightHost.transform.GetChild(i);
@@ -179,7 +182,7 @@ namespace Bismuth.UI.Pages
                     if (string.Equals(w, preferredWeight, StringComparison.OrdinalIgnoreCase)) weightIdx = i;
                 }
 
-                UIBuilder.Dropdown(weightHost.transform, "    Weight", weightNames, weightIdx,
+                UIBuilder.Dropdown(weightHost.transform, "  Weight", weightNames, weightIdx,
                     idx =>
                     {
                         SplitWeight(entries[idx].Name, out _, out curWeight);
@@ -191,12 +194,13 @@ namespace Bismuth.UI.Pages
             {
                 if (offset == 1 && idx == 0)
                 {
-                    for (int i = weightHost.transform.childCount - 1; i >= 0; i--)
-                    {
-                        var c = weightHost.transform.GetChild(i);
-                        c.SetParent(null);
-                        UnityEngine.Object.Destroy(c.gameObject);
-                    }
+                    if (weightHost != null)
+                        for (int i = weightHost.transform.childCount - 1; i >= 0; i--)
+                        {
+                            var c = weightHost.transform.GetChild(i);
+                            c.SetParent(null);
+                            UnityEngine.Object.Destroy(c.gameObject);
+                        }
                     onDefault?.Invoke();
                     return;
                 }
@@ -212,16 +216,12 @@ namespace Bismuth.UI.Pages
                 rebuildWeights(idx - offset, curWeight);
             }, familyFonts);
 
-            weightHost = UIBuilder.Rect("Weights_" + label, parent);
-            var vlg = weightHost.AddComponent<VerticalLayoutGroup>();
-            vlg.childControlWidth = true;
-            vlg.childControlHeight = true;
-            vlg.childForceExpandWidth = true;
-            vlg.childForceExpandHeight = false;
-            vlg.spacing = 2f;
-
-            if (!(defaultSelected && offset == 1))
-                rebuildWeights(familyIdx - offset, curWeight);
+            if (showWeightRow)
+            {
+                weightHost = UIBuilder.VGroup(parent, "Weights_" + label);
+                if (!(defaultSelected && offset == 1))
+                    rebuildWeights(familyIdx - offset, curWeight);
+            }
         }
     }
 }

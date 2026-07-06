@@ -116,6 +116,26 @@ namespace Bismuth
         public bool ShowXAcc = true;
         public bool ShowBpm = true;
         public bool ShowTileBpm = true;
+        // KPS / Best % / Progress Bar ship enabled (Default profile); Azure disables them.
+        public bool ShowKps = true;
+        public bool ShowSongDuration = false;
+        public bool ShowLevelDuration = false;
+        // Furthest progress reached during full (from-0%) attempts; renders in the
+        // attempts block and persists per level alongside the attempt counts.
+        public bool ShowBestProgress = true;
+        // Tweaks tab → Editor: on-screen angle readout for the selected editor tile.
+        public bool EditorTileAngle = false;
+        // Tweaks tab → Custom levels: CLS song-preview volume (0..1; the game plays
+        // previews at full volume).
+        public float ClsPreviewVolume = 0.7f;
+        // Progress bar: thin top-edge bar filled by percentComplete. Style 1 (default):
+        // white fill, progress-gradient perfect color at 100%; in theme mode the fill is
+        // the theme's 100% color as a solid. Styles 2/3 planned.
+        public bool ShowProgressBar = true;
+        public int ProgressBarStyle = 1;
+        public float ProgressBarHeight = 6f;
+        // Vertical gap between stat rows in the left/right panels (VLG spacing).
+        public float StatRowSpacing = 4f;
         public bool ShowTimingScale = true;
         public bool ShowJudgements = true;
         public float JudgementsSize = 0.9f;
@@ -164,7 +184,24 @@ namespace Bismuth
         public KvColor OverlayShadowColor = new KvColor { R = 0f, G = 0f, B = 0f, A = 0.5f };
         // Default to Paperlogy (has CJK/kana): the level name resolves through this font when
         // the game font isn't ready, and 에이투지체 lacks kana, so Japanese titles rendered small.
+        // FontName is the MASTER overlay font: it applies to every part while
+        // OverlayMasterFontEnabled is on, and is the fallback for missing part fonts.
         public string FontName = "Paperlogy-4Regular";
+
+        // Per-part overlay fonts (used while the master toggle is off). Stats also covers
+        // judgements / timing scale / attempts / FPS. Weight overrides resolve against
+        // each part's own family.
+        public bool OverlayMasterFontEnabled = false;
+        public string StatsFontName = "Paperlogy-4Regular";
+        public string ComboFontName = "에이투지체-4Regular";
+        public string KeyViewerFontName = "Paperlogy-4Regular";
+
+        [System.Xml.Serialization.XmlIgnore]
+        public string EffectiveStatsFont => OverlayMasterFontEnabled ? FontName : StatsFontName;
+        [System.Xml.Serialization.XmlIgnore]
+        public string EffectiveComboFont => OverlayMasterFontEnabled ? FontName : ComboFontName;
+        [System.Xml.Serialization.XmlIgnore]
+        public string EffectiveKeyViewerFont => OverlayMasterFontEnabled ? FontName : KeyViewerFontName;
         public bool ShowOverlay = true;
         public bool ShowFps = false;
         // Master switch for the whole Optimizations group; each flag below only takes
@@ -302,6 +339,24 @@ namespace Bismuth
         public OverlayPosition XAccPosition      = OverlayPosition.Left;
         public OverlayPosition BpmPosition       = OverlayPosition.Right;
         public OverlayPosition TileBpmPosition   = OverlayPosition.Right;
+        public OverlayPosition KpsPosition       = OverlayPosition.Right;
+        public OverlayPosition SongDurationPosition  = OverlayPosition.Left;
+        public OverlayPosition LevelDurationPosition = OverlayPosition.Left;
+        // Best % renders as a normal stat row unless parked in the attempts block.
+        public OverlayPosition BestPosition = OverlayPosition.Left;
+        public bool BestInAttempts = false;
+        public string BestLabel = "";
+
+        // Per-stat label overrides ("" = built-in: Progress/Accuracy/XAccuracy/BPM/TBPM/
+        // KPS/Song/Length).
+        public string ProgressLabel = "";
+        public string AccLabel = "";
+        public string XAccLabel = "";
+        public string BpmLabel = "";
+        public string TileBpmLabel = "";
+        public string KpsLabel = "";
+        public string SongDurationLabel = "";
+        public string LevelDurationLabel = "";
         public float TimingScaleY    = 0f;
         public float TimingScaleSize = 0.75f;
         public float AttemptsX = 0.77f;
@@ -357,19 +412,148 @@ namespace Bismuth
         public ColorGradient XAccGradient;
         public bool TileBpmUseBpmGradient = true;
         public ColorGradient TileBpmGradient;
+        public bool KpsUseTileBpmGradient = true;
+        public ColorGradient KpsGradient;
+
+        // Accent-as-theme: when on, one gradient generated from the UI accent replaces
+        // every stat/combo gradient (and the key viewer's default rain color) at evaluate
+        // time. The saved per-stat gradients are untouched, so toggling off restores them.
+        // ON out of the box — the "Default" profile IS the class defaults (red theme);
+        // the "Azure" built-in restores the classic periwinkle, theme off.
+        public bool AccentAsTheme = true;
+
+        private ColorGradient _themeGradient;          // generic (BPM/TBPM/KPS): near-white pop at t=1
+        private ColorGradient _themeProgressGradient;  // perfect = brightened accent
+        private ColorGradient _themeAccGradient;       // acc/xacc: perfect = classic gold
+        private ColorGradient _themeComboGradient;
+        private float _themeKeyR = -1f, _themeKeyG = -1f, _themeKeyB = -1f;
+
+        private void EnsureThemeGradients()
+        {
+            if (_themeGradient != null && _themeKeyR == UiAccentR && _themeKeyG == UiAccentG && _themeKeyB == UiAccentB)
+                return;
+            _themeKeyR = UiAccentR; _themeKeyG = UiAccentG; _themeKeyB = UiAccentB;
+
+            // Shared ramp: soft accent tint → full accent (fresh stop list per gradient).
+            List<ColorStop> Ramp() => new List<ColorStop>
+            {
+                new ColorStop
+                {
+                    Progress = 0f,
+                    R = 1f - (1f - UiAccentR) * 0.45f,
+                    G = 1f - (1f - UiAccentG) * 0.45f,
+                    B = 1f - (1f - UiAccentB) * 0.45f,
+                    A = 1f,
+                },
+                new ColorStop { Progress = 1f, R = UiAccentR, G = UiAccentG, B = UiAccentB, A = 1f },
+            };
+
+            // Brightened accent — full value, boosted saturation (bright red for the red
+            // accent). Shared by the progress perfect and the combo's max end.
+            UnityEngine.Color.RGBToHSV(
+                new UnityEngine.Color(UiAccentR, UiAccentG, UiAccentB),
+                out float th, out float ts, out float tv);
+            var bright = UnityEngine.Color.HSVToRGB(th, UnityEngine.Mathf.Min(1f, ts * 1.25f), 1f);
+
+            // Generic stats: near-white pop at t = 1.
+            _themeGradient = new ColorGradient
+            {
+                HasPerfectColor = true,
+                PR = 1f - (1f - UiAccentR) * 0.35f,
+                PG = 1f - (1f - UiAccentG) * 0.35f,
+                PB = 1f - (1f - UiAccentB) * 0.35f,
+                PA = 1f,
+                Stops = Ramp(),
+            };
+
+            // Progress: 100% flashes the brightened accent.
+            _themeProgressGradient = new ColorGradient
+            {
+                HasPerfectColor = true,
+                PR = bright.r, PG = bright.g, PB = bright.b, PA = 1f,
+                Stops = Ramp(),
+            };
+
+            // Accuracy / X-Accuracy: 100% keeps the classic gold.
+            _themeAccGradient = new ColorGradient
+            {
+                HasPerfectColor = true,
+                PR = 1f, PG = 0.855f, PB = 0f, PA = 1f,
+                Stops = Ramp(),
+            };
+
+            // Combo: same ramp but the max end RAMPS INTO the brightened accent.
+            _themeComboGradient = new ColorGradient
+            {
+                HasPerfectColor = true,
+                PR = bright.r,
+                PG = bright.g,
+                PB = bright.b,
+                PA = 1f,
+                Stops = new List<ColorStop>
+                {
+                    new ColorStop
+                    {
+                        Progress = 0f,
+                        R = 1f - (1f - UiAccentR) * 0.45f,
+                        G = 1f - (1f - UiAccentG) * 0.45f,
+                        B = 1f - (1f - UiAccentB) * 0.45f,
+                        A = 1f,
+                    },
+                    new ColorStop { Progress = 0.55f, R = UiAccentR, G = UiAccentG, B = UiAccentB, A = 1f },
+                    new ColorStop { Progress = 1f, R = bright.r, G = bright.g, B = bright.b, A = 1f },
+                },
+            };
+        }
 
         [System.Xml.Serialization.XmlIgnore]
-        public ColorGradient ActiveXAccGradient => XAccUseAccGradient ? AccGradient : XAccGradient;
+        public ColorGradient ThemeGradient
+        {
+            get { EnsureThemeGradients(); return _themeGradient; }
+        }
+
         [System.Xml.Serialization.XmlIgnore]
-        public ColorGradient ActiveTileBpmGradient => TileBpmUseBpmGradient ? BpmGradient : TileBpmGradient;
+        public ColorGradient ThemeComboGradient
+        {
+            get { EnsureThemeGradients(); return _themeComboGradient; }
+        }
+
+        [System.Xml.Serialization.XmlIgnore]
+        public ColorGradient ThemeProgressGradient
+        {
+            get { EnsureThemeGradients(); return _themeProgressGradient; }
+        }
+
+        [System.Xml.Serialization.XmlIgnore]
+        public ColorGradient ThemeAccGradient
+        {
+            get { EnsureThemeGradients(); return _themeAccGradient; }
+        }
+
+        [System.Xml.Serialization.XmlIgnore]
+        public ColorGradient ActiveProgressGradient => AccentAsTheme ? ThemeProgressGradient : ProgressGradient;
+        [System.Xml.Serialization.XmlIgnore]
+        public ColorGradient ActiveAccGradient => AccentAsTheme ? ThemeAccGradient : AccGradient;
+        [System.Xml.Serialization.XmlIgnore]
+        public ColorGradient ActiveBpmGradient => AccentAsTheme ? ThemeGradient : BpmGradient;
+        [System.Xml.Serialization.XmlIgnore]
+        public ColorGradient ActiveComboGradient => AccentAsTheme ? ThemeComboGradient : ComboGradient;
+        [System.Xml.Serialization.XmlIgnore]
+        public ColorGradient ActiveXAccGradient => AccentAsTheme ? ThemeAccGradient : XAccUseAccGradient ? AccGradient : XAccGradient;
+        [System.Xml.Serialization.XmlIgnore]
+        public ColorGradient ActiveTileBpmGradient => AccentAsTheme ? ThemeGradient : TileBpmUseBpmGradient ? BpmGradient : TileBpmGradient;
+        [System.Xml.Serialization.XmlIgnore]
+        public ColorGradient ActiveKpsGradient => KpsUseTileBpmGradient ? ActiveTileBpmGradient : AccentAsTheme ? ThemeGradient : KpsGradient;
 
         // UGUI settings panel preferences (new shell — see UI/).
         public float UiScale = 1.0f;
         public string UiFontName = "Paperlogy-4Regular";
         public bool UiAccentCustom = false;
-        public float UiAccentR = 0.604f;
-        public float UiAccentG = 0.706f;
-        public float UiAccentB = 1.0f;
+        // Soft-red preset out of the box (the "Default" profile = these class defaults);
+        // the "Azure" built-in profile restores the classic periwinkle.
+        public float UiAccentR = 0.886f;
+        public float UiAccentG = 0.404f;
+        public float UiAccentB = 0.427f;
         // Panel dimensions are saved across sessions; position is not (always re-centered).
         public float UiPanelWidth = 840f;
         public float UiPanelHeight = 540f;
@@ -388,6 +572,8 @@ namespace Bismuth
                 XAccGradient = MakeAccDefault();
             if (TileBpmGradient == null || TileBpmGradient.Stops.Count == 0)
                 TileBpmGradient = MakeBpmDefault();
+            if (KpsGradient == null || KpsGradient.Stops.Count == 0)
+                KpsGradient = MakeBpmDefault();
             if (KvHandPresets == null || KvHandPresets.Count == 0)
             {
                 KvHandPresets = new List<KeyViewerPreset>
@@ -432,6 +618,9 @@ namespace Bismuth
                 if (GameUiTextWeights == null || GameUiTextWeights.Count == 0)
                     GameUiTextWeights = MakeGameUiWeightDefaults();
             }
+            // The pause-button layout target was removed (July 2026) — drop stale saved
+            // overrides so an old Hidden flag can't linger with no UI to clear it.
+            GameUiOverrides?.RemoveAll(o => o != null && string.Equals(o.Key, "pause", System.StringComparison.OrdinalIgnoreCase));
 
             // The judgement default changed Black → Light; carry already-seeded configs
             // still on the old default over, once.

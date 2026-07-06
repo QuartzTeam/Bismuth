@@ -22,6 +22,7 @@
 테스트 환경:
 
 - macOS 26.5, ADOFAI v3.2.0
+- Windows 11, ADOFAI v3.2.0
 - Arch Linux, 커널 7.0, ADOFAI v3.1.2
 
 ## 설치

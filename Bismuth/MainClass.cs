@@ -54,6 +54,7 @@ namespace Bismuth
                     _destroyOldFontsFrame = -1;
                     FontLoader.DestroyTmpAssets(_oldFonts);
                     _oldFonts = null;
+                    overlay?.DumpDebug("post-font-destroy");
                 }
             };
             // Opting into OnUnload makes the mod hot-reloadable: UMM watches the dll and
@@ -203,7 +204,9 @@ namespace Bismuth
                 BuildUI();
                 ApplySelectedFont();
                 overlay?.ApplySettings(Settings);
-                keyViewer?.ApplySettings(Settings);
+                // Structural rebuild, not just ApplySettings — force reload is also the
+                // profile-load path, and profiles can swap the whole preset list.
+                keyViewer?.Rebuild(Settings);
                 KeyLimiter.Apply(Settings);
                 GameUiLayout.Reapply();
                 if (wasOpen) UICore.Open();
@@ -212,6 +215,7 @@ namespace Bismuth
                 _oldFonts = oldFonts;
                 _destroyOldFontsFrame = Time.frameCount + 90; // ~1.5s: covers the frame-spread sweep
                 BismuthLog.Log("[Bismuth] Force reload complete (" + availableFonts.Count + " fonts)");
+                overlay?.DumpDebug("post-forcereload");
             }
             catch (Exception ex)
             {
@@ -252,27 +256,34 @@ namespace Bismuth
         {
             if (overlay == null || availableFonts.Count == 0) return;
 
-            FontLoader.FontEntry target =
+            FontLoader.FontEntry master =
                 FontLoader.Find(availableFonts, Settings.FontName)
                 ?? availableFonts[0];
 
-            // Optional per-part weights for stat rows / combo, drawn from the same family.
-            FontLoader.SplitWeight(target.Name, out string family, out _);
-            var labelEntry      = FindFamilyWeight(family, Settings.StatLabelWeight);
-            var valueEntry      = FindFamilyWeight(family, Settings.StatValueWeight);
-            var comboLabelEntry = FindFamilyWeight(family, Settings.ComboLabelWeight);
-            var comboValueEntry = FindFamilyWeight(family, Settings.ComboValueWeight);
+            // Per-part overlay fonts (master forces FontName onto all three via the
+            // Effective* accessors). Weight overrides resolve inside each part's family.
+            var statsEntry = FontLoader.Find(availableFonts, Settings.EffectiveStatsFont) ?? master;
+            var comboEntry = FontLoader.Find(availableFonts, Settings.EffectiveComboFont) ?? master;
+            var kvEntry    = FontLoader.Find(availableFonts, Settings.EffectiveKeyViewerFont) ?? master;
+            FontLoader.SplitWeight(statsEntry.Name, out string statsFamily, out _);
+            FontLoader.SplitWeight(comboEntry.Name, out string comboFamily, out _);
+            FontLoader.SplitWeight(kvEntry.Name, out string kvFamily, out _);
 
-            overlay.SetFont(target.TmpFont, labelEntry?.TmpFont, valueEntry?.TmpFont,
-                comboLabelEntry?.TmpFont, comboValueEntry?.TmpFont);
-            var kvLabelEntry   = FindFamilyWeight(family, Settings.KeyViewerLabelWeight);
-            var kvCountEntry   = FindFamilyWeight(family, Settings.KeyViewerCountWeight);
-            keyViewer?.SetFont((kvLabelEntry ?? target).TmpFont, (kvCountEntry ?? target).TmpFont);
+            var labelEntry      = FindFamilyWeight(statsFamily, Settings.StatLabelWeight);
+            var valueEntry      = FindFamilyWeight(statsFamily, Settings.StatValueWeight);
+            var comboLabelEntry = FindFamilyWeight(comboFamily, Settings.ComboLabelWeight) ?? comboEntry;
+            var comboValueEntry = FindFamilyWeight(comboFamily, Settings.ComboValueWeight) ?? comboEntry;
+
+            overlay.SetFont(statsEntry.TmpFont, labelEntry?.TmpFont, valueEntry?.TmpFont,
+                comboLabelEntry.TmpFont, comboValueEntry.TmpFont);
+            var kvLabelEntry   = FindFamilyWeight(kvFamily, Settings.KeyViewerLabelWeight);
+            var kvCountEntry   = FindFamilyWeight(kvFamily, Settings.KeyViewerCountWeight);
+            keyViewer?.SetFont((kvLabelEntry ?? kvEntry).TmpFont, (kvCountEntry ?? kvEntry).TmpFont);
             // Game text has its own font, decoupled from the overlay font (Game UI
             // tab). Titles get the configured weight, defaulting to the heaviest.
             FontLoader.FontEntry gameEntry =
                 FontLoader.Find(availableFonts, Settings.GameFontName)
-                ?? target;
+                ?? master;
             FontLoader.SplitWeight(gameEntry.Name, out string gameFamily, out _);
             var titleEntry = FindFamilyWeight(gameFamily, Settings.GameTextTitleWeight)
                 ?? FindFamilyWeight(gameFamily, FontLoader.WeightHeaviest);
@@ -320,6 +331,7 @@ namespace Bismuth
             SceneManager.sceneUnloaded -= OnSceneUnloaded;
             SceneManager.sceneLoaded -= OnSceneLoaded;
             _deferredApplyPending = false;
+            Tweaks.DisposeTileAngle();
             harmony.UnpatchSelf(); // HarmonyX 2.x: UnpatchAll(id) is obsolete; this unpatches our instance
             if (overlay != null)
             {

@@ -200,12 +200,18 @@ namespace Bismuth.UI
         private static void DoDelete(string keep, string del)
         {
             if (UpdateChecker.DeleteInstall(keep, del, out string error, out bool deletedActive))
+            {
                 _body.text = deletedActive
                     ? "Deleted. This session keeps running; restart the game with your selected loader."
                     : "Deleted the unused copy.";
-            else
-                _body.text = "Delete failed: " + error;
-            SetButtons(("Close", Close));
+                SetButtons(("Close", Close));
+                return;
+            }
+            // Failed deletes re-prompt every launch; offer the opt-out here so a locked
+            // file (seen under Wine) doesn't nag forever.
+            _body.text = "Delete failed: " + error +
+                "\nClose the game and delete the folder manually, or stop asking.";
+            SetButtons(("Stop asking", KeepBoth), ("Close", Close));
         }
 
         private static void KeepBoth()

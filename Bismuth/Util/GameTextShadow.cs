@@ -46,6 +46,27 @@ namespace Bismuth
         // size into their text that overrides (and fights) our scaling.
         private bool _stripSize;
         private static readonly Regex SizeTag = new Regex("</?size[^>]*>", RegexOptions.IgnoreCase);
+
+        /* Custom charts ship malformed hex in <color=#…> tags (seen in the wild: a
+           7-digit "#F4FA588" in a song title). TMP rejects invalid lengths and renders
+           the tag literally, so clamp the digits to the nearest valid length (8/6/4/3)
+           before mirroring; hopeless values drop the tag instead of showing it. */
+        private static readonly Regex ColorTag = new Regex("<color=#([0-9A-Fa-f]+)>", RegexOptions.IgnoreCase);
+
+        internal static string SanitizeColorTags(string text)
+        {
+            if (string.IsNullOrEmpty(text) ||
+                text.IndexOf("<color=#", System.StringComparison.OrdinalIgnoreCase) < 0)
+                return text;
+            return ColorTag.Replace(text, m =>
+            {
+                string hex = m.Groups[1].Value;
+                int len = hex.Length;
+                if (len == 3 || len == 4 || len == 6 || len == 8) return m.Value;
+                int keep = len > 8 ? 8 : len == 7 ? 6 : len == 5 ? 4 : 0;
+                return keep == 0 ? "" : "<color=#" + hex.Substring(0, keep) + ">";
+            });
+        }
         // Wrap role-LABEL lines in <b> while mirroring — guest-track text mixes a bold label
         // with a regular name in one component ("객원 레벨 디자인:\nRikri"), which component
         // weight can't split.
@@ -148,7 +169,7 @@ namespace Bismuth
                 _lastSize = float.NaN; // re-derive size against the new scale
             }
 
-            string text = _src.text;
+            string text = SanitizeColorTags(_src.text);
             if (_stripSize && !string.IsNullOrEmpty(text) && text.IndexOf("<size", System.StringComparison.OrdinalIgnoreCase) >= 0)
                 text = SizeTag.Replace(text, "");
             if (_collapseNewlines && !string.IsNullOrEmpty(text) && text.IndexOf('\n') >= 0)

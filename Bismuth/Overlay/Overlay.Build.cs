@@ -30,13 +30,20 @@ namespace Bismuth
             attemptsFullLabel.fontSize = 18;
             attemptsFullValue.fontSize = 18;
             attemptsFullRow.transform.SetParent(attemptsContainer, false);
+            // Best % parents to a side panel or the attempts block per settings —
+            // PlaceRows decides, ApplySettings styles it for whichever home it's in.
+            (bestRow, bestLabel, bestValue) = MakeRow("Best", "Best | ");
             (accRow,         accLabel,         accValue)         = MakeRow("Acc",         "Accuracy | ");
             (xaccRow,        xaccLabel,        xaccValue)        = MakeRow("XAcc",        "XAccuracy | ");
             (bpmRow,         bpmLabel,         bpmValue)         = MakeRow("Bpm",         "BPM | ");
             (tileBpmRow,     tileBpmLabel,     tileBpmValue)     = MakeRow("TileBpm",     "TBPM | ");
+            (kpsRow,         kpsLabel,         kpsValue)         = MakeRow("Kps",         "KPS | ");
+            (songDurRow,     songDurLabel,     songDurValue)     = MakeRow("SongDur",     "Song Length | ");
+            (levelDurRow,    levelDurLabel,    levelDurValue)    = MakeRow("LevelDur",    "Level Length | ");
             (timingScaleRow, timingScaleLabel, timingScaleValue) = MakeRow("TimingScale", "TimingScale - ");
             timingScaleRow.transform.SetParent(timingScaleContainer, false);
 
+            progressBarGo = MakeProgressBar(canvasGo, out progressBarFill, out progressBarFillImg);
             judgementsRow = MakeJudgementsRow(judgementsContainer.gameObject, out judgementTexts);
             comboDisplayContainer = MakeComboDisplay(canvasGo, out comboDisplayLabel, out comboDisplayValue, out _comboLabelWrapper);
             (fpsContainer, fpsText) = MakeFpsDisplay();
@@ -137,11 +144,15 @@ namespace Bismuth
 
             var rect = (RectTransform)go.transform;
             rect.anchorMin = rect.anchorMax = new Vector2(0.75f, 0.1f);
-            rect.pivot = new Vector2(0.5f, 0.5f);
+            // Match the settings default (AttemptsAlign = Left): pivot picks the pinned
+            // edge, childAlignment aligns the rows. ApplySettings re-derives both, but
+            // starting from Center left the block center-rendered in any window where the
+            // attempts pass hadn't run yet.
+            rect.pivot = new Vector2(0f, 0.5f);
             rect.anchoredPosition = Vector2.zero;
 
             var vlg = go.AddComponent<VerticalLayoutGroup>();
-            vlg.childAlignment = TextAnchor.MiddleCenter;
+            vlg.childAlignment = TextAnchor.MiddleLeft;
             vlg.childForceExpandHeight = false;
             vlg.childForceExpandWidth = false;
             vlg.spacing = 4f;
@@ -152,6 +163,40 @@ namespace Bismuth
             csf.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
 
             return rect;
+        }
+
+        // Barebones progress bar: full-width strip flush with the top edge; a left-anchored
+        // fill whose anchorMax.x tracks percentComplete. Styling knobs to come.
+        private static GameObject MakeProgressBar(GameObject canvasGo, out RectTransform fill, out Image fillImg)
+        {
+            var go = new GameObject("ProgressBar", typeof(RectTransform));
+            go.transform.SetParent(canvasGo.transform, false);
+            var rect = (RectTransform)go.transform;
+            rect.anchorMin = new Vector2(0f, 1f);
+            rect.anchorMax = new Vector2(1f, 1f);
+            rect.pivot = new Vector2(0.5f, 1f);
+            rect.sizeDelta = new Vector2(0f, 6f);
+            rect.anchoredPosition = Vector2.zero;
+
+            var bg = go.AddComponent<Image>();
+            bg.sprite = UI.Theme.White;
+            bg.color = new Color(0f, 0f, 0f, 0.35f);
+            bg.raycastTarget = false;
+
+            var fillGo = new GameObject("Fill", typeof(RectTransform));
+            fillGo.transform.SetParent(go.transform, false);
+            fill = (RectTransform)fillGo.transform;
+            fill.anchorMin = new Vector2(0f, 0f);
+            fill.anchorMax = new Vector2(0f, 1f);
+            fill.offsetMin = Vector2.zero;
+            fill.offsetMax = Vector2.zero;
+            fillImg = fillGo.AddComponent<Image>();
+            fillImg.sprite = UI.Theme.White;
+            fillImg.color = Color.white;
+            fillImg.raycastTarget = false;
+
+            go.SetActive(false);
+            return go;
         }
 
         private static GameObject MakeJudgementsRow(GameObject parent, out TextMeshProUGUI[] texts)
