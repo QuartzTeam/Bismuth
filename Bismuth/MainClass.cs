@@ -109,12 +109,9 @@ namespace Bismuth
             _modEntry = modEntry;
             BismuthLog.Init();
             harmony = new Harmony(modEntry.Info.Id);
-            harmony.PatchAll(Assembly.GetExecutingAssembly());
-            // Isolated so a Harmony-version issue in this optional layer can never abort the
-            // whole mod load (a MissingMethodException from an absent Patch overload on older
-            // Harmony surfaces at THIS call site, not inside the method's own try/catch).
-            try { KeyLimiter.TryPatchRawInput(harmony); }
-            catch (Exception e) { BismuthLog.Log("TryPatchRawInput skipped: " + e.Message); }
+            // Patch at the same early point as always when the master switch is on; a
+            // master-off launch stays fully hands-off until the rail switch flips.
+            if (Settings.ModEnabled) PatchAllOnce();
 
             SceneManager.sceneUnloaded += OnSceneUnloaded;
             SceneManager.sceneLoaded += OnSceneLoaded;
@@ -122,6 +119,20 @@ namespace Bismuth
             if (IsEngineReady() && TryEagerInit())
                 return;
             _deferredApplyPending = true;
+        }
+
+        private static bool _patched;
+
+        private static void PatchAllOnce()
+        {
+            if (_patched) return;
+            _patched = true;
+            harmony.PatchAll(Assembly.GetExecutingAssembly());
+            // Isolated so a Harmony-version issue in this optional layer can never abort the
+            // whole mod load (a MissingMethodException from an absent Patch overload on older
+            // Harmony surfaces at THIS call site, not inside the method's own try/catch).
+            try { KeyLimiter.TryPatchRawInput(harmony); }
+            catch (Exception e) { BismuthLog.Log("TryPatchRawInput skipped: " + e.Message); }
         }
 
         // Time.frameCount == 0 during koren UMM's static-ctor injection window. Calling
@@ -137,16 +148,9 @@ namespace Bismuth
         {
             try
             {
-                if (overlay == null) overlay = Overlay.Create();
-                overlay.ApplySettings(Settings);
-                if (keyViewer == null) keyViewer = KeyViewer.Create(Settings);
-
                 availableFonts = FontLoader.ScanFonts(_modEntry.Path);
-                ApplySelectedFont();
-                KeyLimiter.Apply(Settings);
-
-                GameUiLayout.Reapply();
                 BuildUI();
+                if (Settings.ModEnabled) EnableFeatures();
                 UpdateChecker.Begin(_modEntry);
                 return true;
             }
@@ -162,6 +166,72 @@ namespace Bismuth
                     UnityEngine.Object.Destroy(KeyViewer.Instance.gameObject);
                 return false;
             }
+        }
+
+        /* Everything the mod does TO THE GAME: Harmony patches, overlay, key viewer, input
+           limiter, game font/layout rewrites. The panel, hotkey, fonts, and update checker
+           live outside this pair, so the rail's master switch (and a master-off launch)
+           keeps a way back on screen. _featuresOn flips only after a full enable, so a
+           mid-enable exception during deferred init retries cleanly on the next scene load. */
+        private static bool _featuresOn;
+        internal static bool FeaturesOn => _featuresOn;
+
+        private static void EnableFeatures()
+        {
+            if (_featuresOn) return;
+            try
+            {
+                PatchAllOnce();
+                if (overlay == null) overlay = Overlay.Create();
+                overlay.ApplySettings(Settings);
+                if (keyViewer == null) keyViewer = KeyViewer.Create(Settings);
+                // On before the re-applies below — GameFontApplier/GameUiLayout gate on it.
+                _featuresOn = true;
+                ApplySelectedFont();
+                KeyLimiter.Apply(Settings);
+                GameUiLayout.Reapply();
+            }
+            catch { _featuresOn = false; throw; }
+        }
+
+        private static void DisableFeatures()
+        {
+            if (!_featuresOn) return;
+            _featuresOn = false;
+            if (LocationEditor.IsActive) LocationEditor.Close();
+            GameUiEditor.Close();
+            harmony.UnpatchSelf(); // HarmonyX 2.x: UnpatchAll(id) is obsolete; this unpatches our instance
+            _patched = false;
+            if (overlay != null)
+            {
+                UnityEngine.Object.Destroy(overlay.gameObject);
+                overlay = null;
+            }
+            if (keyViewer != null)
+            {
+                keyViewer.SaveCounts();
+                UnityEngine.Object.Destroy(keyViewer.gameObject);
+                keyViewer = null;
+            }
+            // Wrappers inserted into the game's UI hierarchy must not outlive the features
+            // (hot reloads would otherwise stack stale wrappers from dead assemblies).
+            GameUiLayout.RestoreAll();
+            GameFontApplier.RestoreAll();
+        }
+
+        // Rail master switch: same effect as the UMM checkbox, but reachable in-game and
+        // persisted, so a master-off state survives a restart.
+        internal static void SetMasterEnabled(bool on)
+        {
+            Settings.ModEnabled = on;
+            try
+            {
+                if (on) EnableFeatures();
+                else DisableFeatures();
+            }
+            catch (Exception ex) { BismuthLog.Log("[Bismuth] Master toggle failed: " + ex); }
+            Settings.Save(_modEntry);
+            BismuthLog.Log("[Bismuth] Master switch → " + (on ? "enabled" : "disabled"));
         }
 
         // Builds the settings panel + tabs over the current font list. Reused by force-reload.
@@ -183,6 +253,9 @@ namespace Bismuth
             UICore.Tabs.AddTab("Game UI", PageGameUi.Build);
             UICore.Tabs.AddTab("Tweaks", PageTweaks.Build);
             UICore.Tabs.AddTab("Misc", PageMisc.Build);
+            // Master kill-switch pinned under the tabs — flips the whole mod on/off
+            // without a trip to UMM's own settings window.
+            UICore.Tabs.AddMasterSwitch("Mod enabled", Settings.ModEnabled, SetMasterEnabled);
         }
 
         // Misc → Debug "Force reload": re-scan fonts (pick up newly dropped files), rebuild the
@@ -207,8 +280,11 @@ namespace Bismuth
                 // Structural rebuild, not just ApplySettings — force reload is also the
                 // profile-load path, and profiles can swap the whole preset list.
                 keyViewer?.Rebuild(Settings);
-                KeyLimiter.Apply(Settings);
-                GameUiLayout.Reapply();
+                if (_featuresOn)
+                {
+                    KeyLimiter.Apply(Settings);
+                    GameUiLayout.Reapply();
+                }
                 if (wasOpen) UICore.Open();
                 // A prior pending set (rapid double reload) is unreferenced by now — drop it.
                 if (_oldFonts != null) FontLoader.DestroyTmpAssets(_oldFonts);
@@ -239,7 +315,7 @@ namespace Bismuth
 
         private static void OnSceneUnloaded(Scene scene)
         {
-            if (!Settings.OptimizationsEnabled || !Settings.OptUnloadAssets) return;
+            if (!_featuresOn || !Settings.OptimizationsEnabled || !Settings.OptUnloadAssets) return;
             // Measure synchronously: op.completed fires after the next scene starts allocating,
             // which makes before-after read as negative noise.
             long before = UnityEngine.Profiling.Profiler.GetTotalAllocatedMemoryLong();
@@ -331,24 +407,7 @@ namespace Bismuth
             SceneManager.sceneUnloaded -= OnSceneUnloaded;
             SceneManager.sceneLoaded -= OnSceneLoaded;
             _deferredApplyPending = false;
-            Tweaks.DisposeTileAngle();
-            harmony.UnpatchSelf(); // HarmonyX 2.x: UnpatchAll(id) is obsolete; this unpatches our instance
-            if (overlay != null)
-            {
-                UnityEngine.Object.Destroy(overlay.gameObject);
-                overlay = null;
-            }
-            if (keyViewer != null)
-            {
-                keyViewer.SaveCounts();
-                UnityEngine.Object.Destroy(keyViewer.gameObject);
-                keyViewer = null;
-            }
-            // Wrappers inserted into the game's UI hierarchy must not outlive the mod
-            // (hot reloads would otherwise stack stale wrappers from dead assemblies).
-            GameUiEditor.Close();
-            GameUiLayout.RestoreAll();
-            GameFontApplier.RestoreAll();
+            DisableFeatures();
             // Runtime-created TMP assets (SDF atlases + materials) would otherwise pile up
             // across hot reloads — Mono keeps the old assembly alive.
             FontLoader.DestroyTmpAssets(availableFonts);

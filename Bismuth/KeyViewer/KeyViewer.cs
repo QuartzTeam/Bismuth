@@ -112,7 +112,7 @@ namespace Bismuth
         private readonly Dictionary<string, int> _lastTotalPerPreset = new Dictionary<string, int>();
 
         private static bool AnyViewerOn(Settings s) =>
-            !s.ActiveHideAllUI && s.ShowKeyViewer &&
+            !s.ActiveHideAllUI && !Settings.ExternalEditorSuppress && s.ShowKeyViewer &&
             ((s.ShowHandViewer && s.Hand != null) || (s.ShowFootViewer && s.Foot != null));
 
         // Per-scene suppression (level editor / main menu), independent of the enable flags.

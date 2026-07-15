@@ -8,7 +8,6 @@ namespace Bismuth
         {
             GameFontApplier.Tick();
             GameUiLayout.Tick();
-            Tweaks.TickTileAngle();
             if (inLevel && scrController.instance == null)
                 inLevel = false;
 
@@ -20,8 +19,11 @@ namespace Bismuth
                  settings.ShowSongDuration || settings.ShowLevelDuration ||
                  settings.ShowProgressBar || settings.ShowTimingScale || settings.ShowJudgements);
             bool paused = scrController.instance?.paused ?? false;
+            // Combo rides the same master Enable as the stats — it's an overlay part too.
+            bool showCombo = settings.ShowOverlay && settings.ShowComboDisplay;
             bool show = _editMode ||
-                (inLevel && !paused && !settings.ActiveHideAllUI && (showOverlayStats || settings.ShowComboDisplay));
+                (inLevel && !paused && !settings.ActiveHideAllUI && !Settings.ExternalEditorSuppress
+                 && (showOverlayStats || showCombo));
             if (canvas.gameObject.activeSelf != show)
                 canvas.gameObject.SetActive(show);
 

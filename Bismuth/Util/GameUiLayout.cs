@@ -261,7 +261,7 @@ namespace Bismuth
 
         internal static void Reapply()
         {
-            if (S == null) return;
+            if (S == null || !MainClass.FeaturesOn) return;
             PruneWrappers();
             foreach (var t in Targets)
             {
@@ -275,6 +275,8 @@ namespace Bismuth
         // Applies one override live, also used by editor mid-drag
         internal static void ApplyOne(string key)
         {
+            if (!MainClass.FeaturesOn) return; // master-off panels may still edit values
+
             foreach (var t in Targets)
                 if (t.Key == key)
                 {
@@ -541,7 +543,7 @@ namespace Bismuth
         internal static void ApplyErrorMeter(scrHitErrorMeter meter)
         {
             var s = S;
-            if (s == null || meter == null) return;
+            if (s == null || meter == null || !MainClass.FeaturesOn) return;
             var w = meter.wrapperRectTransform;
             if (w == null) return;
 

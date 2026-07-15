@@ -166,6 +166,89 @@ namespace Bismuth.UI
             return stack;
         }
 
+        /* Master switch pinned to the rail's bottom edge (below a divider) — mirrors the
+           UMM enable checkbox so the whole mod can be flipped without leaving the game.
+           Same ring+dot radio as UIBuilder.Toggle; the label dims while the mod is off. */
+        public void AddMasterSwitch(string label, bool initial, Action<bool> onChange)
+        {
+            const float rowH = 34f;
+            var item = UIBuilder.Rect("MasterSwitch", _rail);
+            var r = (RectTransform)item.transform;
+            r.anchorMin = new Vector2(0, 0);
+            r.anchorMax = new Vector2(1, 0);
+            r.pivot = new Vector2(0.5f, 0);
+            r.sizeDelta = new Vector2(0, rowH);
+            r.anchoredPosition = Vector2.zero;
+
+            var rowBg = item.AddComponent<Image>();
+            rowBg.sprite = Theme.White;
+            rowBg.color = new Color(0, 0, 0, 0);
+            rowBg.raycastTarget = true;
+
+            var div = UIBuilder.Rect("Divider", item.transform);
+            var dr = (RectTransform)div.transform;
+            dr.anchorMin = new Vector2(0, 1);
+            dr.anchorMax = new Vector2(1, 1);
+            dr.offsetMin = Vector2.zero;
+            dr.offsetMax = new Vector2(0, 1f);
+            var dImg = div.AddComponent<Image>();
+            dImg.sprite = Theme.White;
+            dImg.color = Theme.PanelBorder;
+            dImg.raycastTarget = false;
+
+            var labelGo = UIBuilder.Rect("Label", item.transform);
+            var lr = (RectTransform)labelGo.transform;
+            lr.anchorMin = new Vector2(0, 0);
+            lr.anchorMax = new Vector2(1, 1);
+            lr.offsetMin = new Vector2(12f, 0f);
+            lr.offsetMax = new Vector2(-30f, 0f);
+            var lbl = UIBuilder.Tmp(labelGo, label, 13, TextAnchor.MiddleLeft,
+                initial ? Theme.Text : Theme.TextMuted);
+            var guard = labelGo.AddComponent<TabLabelGuard>();
+            guard.Label = lbl; guard.Expected = label;
+
+            const float ringSize = 15f;
+            const float dotSize = 6.5f;
+            var ringGo = UIBuilder.Rect("Ring", item.transform);
+            var ringRect = (RectTransform)ringGo.transform;
+            ringRect.anchorMin = new Vector2(1f, 0.5f);
+            ringRect.anchorMax = new Vector2(1f, 0.5f);
+            ringRect.pivot = new Vector2(1f, 0.5f);
+            ringRect.anchoredPosition = new Vector2(-9f, 0f);
+            ringRect.sizeDelta = new Vector2(ringSize, ringSize);
+            var ring = ringGo.AddComponent<RoundedRectGraphic>();
+            ring.Radius = ringSize * 0.5f;
+            ring.BorderWidth = 1.25f;
+            ring.BorderColor = initial ? Theme.ToggleOn : Theme.ToggleOff;
+            ring.color = new Color(0, 0, 0, 0);
+            ring.raycastTarget = false;
+
+            var dotGo = UIBuilder.Rect("Dot", ringGo.transform);
+            var dotRect = (RectTransform)dotGo.transform;
+            dotRect.anchorMin = new Vector2(0.5f, 0.5f);
+            dotRect.anchorMax = new Vector2(0.5f, 0.5f);
+            dotRect.pivot = new Vector2(0.5f, 0.5f);
+            dotRect.sizeDelta = new Vector2(dotSize, dotSize);
+            var dot = dotGo.AddComponent<RoundedRectGraphic>();
+            dot.Radius = dotSize * 0.5f;
+            dot.color = Theme.ToggleOn;
+            dot.raycastTarget = false;
+            dotGo.SetActive(initial);
+
+            bool value = initial;
+            var hover = item.AddComponent<HoverHandler>();
+            hover.OnEnter = () => rowBg.color = Theme.TabHover;
+            hover.OnExit = () => rowBg.color = new Color(0, 0, 0, 0);
+            ClickHandler.Attach(item, () =>
+            {
+                value = !value;
+                ring.BorderColor = value ? Theme.ToggleOn : Theme.ToggleOff;
+                dotGo.SetActive(value);
+                lbl.color = value ? Theme.Text : Theme.TextMuted;
+                onChange?.Invoke(value);
+            });
+        }
+
         // Search navigation: land on the tab's root, then run the result's opener (a
         // NavRow/NavCard onOpen closure that pushes its subpage).
         public void OpenSearchResult(int idx, Action open)

@@ -111,6 +111,12 @@ namespace Bismuth
 
     public class Settings : UnityModManager.ModSettings
     {
+        /* Master switch (rail toggle at the bottom of the panel). Off = the mod keeps only
+           its panel/hotkey shell alive — no patches, no overlay/key viewer, no game-text or
+           layout rewrites — same net effect as the UMM checkbox, but recoverable in-game.
+           Persisted so a disabled mod stays disabled across restarts. */
+        public bool ModEnabled = true;
+
         public bool ShowProgress = true;
         public bool ShowAcc = false;
         public bool ShowXAcc = true;
@@ -123,8 +129,6 @@ namespace Bismuth
         // Furthest progress reached during full (from-0%) attempts; renders in the
         // attempts block and persists per level alongside the attempt counts.
         public bool ShowBestProgress = true;
-        // Tweaks tab → Editor: on-screen angle readout for the selected editor tile.
-        public bool EditorTileAngle = false;
         // Tweaks tab → Custom levels: CLS song-preview volume (0..1; the game plays
         // previews at full volume).
         public float ClsPreviewVolume = 0.7f;
@@ -265,11 +269,6 @@ namespace Bismuth
 
         public bool BlockInputsWhileMenuOpen = true;
 
-        // Tweaks — key that pauses/resumes autoplay while play-testing in the editor
-        // (the game hardcodes Space; rebindable + disableable from the Tweaks tab).
-        public bool AutoplayPauseEnabled = false;
-        public UnityEngine.KeyCode AutoplayPauseKey = UnityEngine.KeyCode.Space;
-
         // User chose "Keep both" in the duplicate-install prompt (Mods/ + UMMMods/).
         // Don't nag again.
         public bool IgnoreDuplicateInstall = false;
@@ -304,14 +303,21 @@ namespace Bismuth
         public bool HideLevelName = false;
         public bool HideBetaBuild = false;
 
+        /* Sapphire's Editor Mode (clean-screen charting) hides Bismuth's overlays and the
+           game HUD extras while in the editor. The editor suite lives in the Sapphire mod
+           now; it sets this via reflection (Bismuth.Settings.ExternalEditorSuppress).
+           Static: runtime-only, never serialized, no instance needed from another mod. */
+        public static bool ExternalEditorSuppress;
+
         // Effective Hide* — each Hide flag is gated by the section's master toggle so consumers
-        // never need to repeat the && HideUiEnabled check.
+        // never need to repeat the && HideUiEnabled check. Sapphire's Editor Mode ORs into
+        // the flags it covers, so every existing consumer picks it up for free.
         [System.Xml.Serialization.XmlIgnore] public bool ActiveHideAllUI             => HideUiEnabled && HideAllUI;
-        [System.Xml.Serialization.XmlIgnore] public bool ActiveHideHitmeter          => HideUiEnabled && HideHitmeter;
-        [System.Xml.Serialization.XmlIgnore] public bool ActiveHideAutoplayText      => HideUiEnabled && HideAutoplayText;
-        [System.Xml.Serialization.XmlIgnore] public bool ActiveHideAutoplayIcon      => HideUiEnabled && HideAutoplayIcon;
-        [System.Xml.Serialization.XmlIgnore] public bool ActiveHideNoFail            => HideUiEnabled && HideNoFail;
-        [System.Xml.Serialization.XmlIgnore] public bool ActiveHideDifficulty        => HideUiEnabled && HideDifficulty;
+        [System.Xml.Serialization.XmlIgnore] public bool ActiveHideHitmeter          => (HideUiEnabled && HideHitmeter) || ExternalEditorSuppress;
+        [System.Xml.Serialization.XmlIgnore] public bool ActiveHideAutoplayText      => (HideUiEnabled && HideAutoplayText) || ExternalEditorSuppress;
+        [System.Xml.Serialization.XmlIgnore] public bool ActiveHideAutoplayIcon      => (HideUiEnabled && HideAutoplayIcon) || ExternalEditorSuppress;
+        [System.Xml.Serialization.XmlIgnore] public bool ActiveHideNoFail            => (HideUiEnabled && HideNoFail) || ExternalEditorSuppress;
+        [System.Xml.Serialization.XmlIgnore] public bool ActiveHideDifficulty        => (HideUiEnabled && HideDifficulty) || ExternalEditorSuppress;
         [System.Xml.Serialization.XmlIgnore] public bool ActiveHideLevelName         => HideUiEnabled && HideLevelName;
         [System.Xml.Serialization.XmlIgnore] public bool ActiveHideBetaBuild         => HideUiEnabled && HideBetaBuild;
 

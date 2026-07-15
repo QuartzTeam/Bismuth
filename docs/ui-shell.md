@@ -63,6 +63,10 @@ This applies to all future hotkeys: **never bind Option + letter on macOS.** Cmd
 
 `UICore.Initialize(...)` is called from `MainClass.TryEagerInit`, which is itself gated by `IsEngineReady()` and retried on first scene load when the engine wasn't ready at toggle-on. This shares the same deferred-init mechanism as Overlay / KeyViewer construction — necessary because `koren UMM` / UMMCompat can load mods before game statics are alive (calling asset APIs that early crashes the engine, uncatchable).
 
+## Master switch (rail)
+
+`TabRail.AddMasterSwitch` pins a toggle row to the bottom of the tab rail (wired in `MainClass.BuildUI` → `MainClass.SetMasterEnabled`). It drives `Settings.ModEnabled` (persisted) and flips `MainClass.EnableFeatures()` / `DisableFeatures()` — the same feature set the UMM checkbox controls, split so the **shell survives**: panel, Ctrl+B hotkey, fonts, and update checker stay alive while everything the mod does *to the game* (Harmony patches, Overlay, KeyViewer, `GameUiLayout` wrappers, `GameFontApplier` restyle) is torn down and restored. `MainClass.FeaturesOn` is the runtime gate: `GameFontApplier.Enabled`, `GameUiLayout.Reapply/ApplyOne/ApplyErrorMeter`, and the scene-unload optimization all check it, so editing settings in a master-off panel never touches game objects. A master-off state persists across restarts (a master-off launch never patches at all); the UMM toggle (`StopMod`) additionally disposes the shell.
+
 ## Settings UI pages (`UI/Pages/`)
 
 All settings interaction is UGUI (the IMGUI SettingsGui/SettingsInput files were deleted June 2026 after the port). Conventions:

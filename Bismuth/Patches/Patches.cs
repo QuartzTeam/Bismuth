@@ -48,39 +48,6 @@ namespace Bismuth
             }
         }
 
-        /* The editor's play-mode autoplay pause is hardcoded to Space:
-             scnEditor.Update — if (RDC.auto && Input.GetKeyDown(KeyCode.Space) && playMode) toggle pause
-           Swap that literal Space (KeyCode 32) for the user's configured key (Tweaks tab) so it
-           can be rebound. Matches the one `ldc.i4 32` feeding an Input.GetKeyDown in the method
-           (the other Space checks live in unrelated classes). Fails safe: if the pattern isn't
-           found after a game update, nothing is replaced and vanilla Space still pauses. */
-        [HarmonyPatch(typeof(scnEditor), "Update")]
-        private static class EditorAutoPauseKeyPatch
-        {
-            private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
-            {
-                var codes = new List<CodeInstruction>(instructions);
-                try
-                {
-                    var getKeyDown = AccessTools.Method(typeof(Input), "GetKeyDown", new[] { typeof(KeyCode) });
-                    var repl = AccessTools.Method(typeof(Tweaks), nameof(Tweaks.AutoPauseKeyCode));
-                    for (int i = 0; i < codes.Count - 1; i++)
-                    {
-                        bool loads32 = (codes[i].opcode == OpCodes.Ldc_I4_S || codes[i].opcode == OpCodes.Ldc_I4)
-                            && codes[i].operand != null && Convert.ToInt32(codes[i].operand) == 32;
-                        if (loads32 && codes[i + 1].Calls(getKeyDown))
-                        {
-                            codes[i].opcode = OpCodes.Call;   // preserves any labels on the instruction
-                            codes[i].operand = repl;
-                            break;
-                        }
-                    }
-                }
-                catch { }
-                return codes;
-            }
-        }
-
         // An in-game retry reloads the scene via scrController.Restart, which re-enters
         // scnGame.Play fresh — so flag the restart here and consume it in the Play postfix.
         // (ADOFAI v3.2 dropped Play's old isRestart parameter, breaking the by-name bind.)
@@ -296,6 +263,11 @@ namespace Bismuth
             public static void Prefix()
             {
                 _prevAuto = RDC.auto;
+                /* Sapphire's Editor Mode must NOT use this flip: in the editor scene any
+                   code that reads RDC.auto mid-frame (or an exception skipping the
+                   postfix) sees autoplay off and it "turns itself off". Sapphire hides
+                   the label itself (Text disable in its own patch). */
+                if (Settings.ExternalEditorSuppress) return;
                 if (RDC.auto && (MainClass.Settings.ActiveHideAutoplayText || MainClass.Settings.ActiveHideAllUI)
                     && Overlay.Instance != null && Overlay.Instance.InLevel)
                     RDC.auto = false;

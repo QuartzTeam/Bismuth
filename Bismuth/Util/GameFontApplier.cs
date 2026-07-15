@@ -25,8 +25,10 @@ namespace Bismuth
         // is still swapped in place; its original state is cached here for Restore.
         private static readonly Dictionary<TMP_Text, TmpState> _origTmp = new Dictionary<TMP_Text, TmpState>();
 
+        // FeaturesOn: the master switch. A master-off panel can still flip this page's
+        // settings; Reapply() must then restore rather than sweep.
         private static bool Enabled =>
-            MainClass.Settings != null && MainClass.Settings.GameTextUseOverlayFont;
+            MainClass.FeaturesOn && MainClass.Settings != null && MainClass.Settings.GameTextUseOverlayFont;
 
         /* Hand-tuned bases for Pretendard over the game fonts: metric normalization
            alone leaves text ~1.4× too large and leading ~1.5× too tight. Sliders
@@ -700,6 +702,7 @@ namespace Bismuth
         {
             if (_tmpFont == null) return;
             Prune();
+            RefreshModRootPrefixes(); // pick up mods installed after our load
             RefreshVersionTexts();
             _sweepBoldCount = 0;
             if (DiagEnabled) _diagBudget = 64; // per-sweep cap so it can't flood log
@@ -803,9 +806,11 @@ namespace Bismuth
                full-size swapped and scene-bolded ("8-X Jungle City" rendered huge). */
             var root = c.transform.root;
             if (root != null && root.name.StartsWith("Bismuth")) return true;
-            // Other mods' HUDs (TUFHelper's PP displayer, leaderboards, …) are theirs to
-            // style — leave them on their own fonts.
-            if (IsForeignModUi(c)) return true;
+            // Other mods' HUDs (Sapphire's editor chrome, TUFHelper's PP displayer, …) are
+            // theirs to style — leave them on their own fonts. Root name first: it's cheap,
+            // and some foreign labels are plain TMP under a bare canvas with no mod
+            // component anywhere in their chain, invisible to the assembly walk.
+            if (IsOtherModRoot(root) || IsForeignModUi(c)) return true;
             // In-level text decorations (scrDecoration) are styled by the mapper — their
             // FontName and size are part of the chart, so leave them untouched.
             try { if (c.GetComponentInParent<scrDecoration>(true) != null) return true; }
@@ -826,6 +831,46 @@ namespace Bismuth
         private static readonly Dictionary<System.Reflection.Assembly, bool> _foreignAsm =
             new Dictionary<System.Reflection.Assembly, bool>();
         private static System.Reflection.Assembly _gameAsm, _bismuthAsm;
+
+        /* Mods conventionally name their own canvases after themselves ("SapphireToolbar",
+           "SapphireEditorEvents", "BismuthUI" …), so a hierarchy whose ROOT starts with
+           another loaded mod's Id is that mod's UI. This is the only signal on foreign
+           labels that carry no mod MonoBehaviour in their ancestor chain (a plain TMP
+           straight under a bare canvas). Prefixes come from the UMM registry — no
+           hardcoded mod list; refreshed each full sweep so late-installed mods count. */
+        private static string[] _modRootPrefixes;
+
+        internal static void RefreshModRootPrefixes() => _modRootPrefixes = null;
+
+        private static bool IsOtherModRoot(Transform root)
+        {
+            if (root == null) return false;
+            if (_modRootPrefixes == null) _modRootPrefixes = BuildModRootPrefixes();
+            string n = root.name;
+            for (int i = 0; i < _modRootPrefixes.Length; i++)
+                if (n.StartsWith(_modRootPrefixes[i], System.StringComparison.OrdinalIgnoreCase))
+                    return true;
+            return false;
+        }
+
+        private static string[] BuildModRootPrefixes()
+        {
+            var list = new List<string>();
+            try
+            {
+                foreach (var m in UnityModManagerNet.UnityModManager.modEntries)
+                {
+                    string id = m?.Info?.Id;
+                    // ≥4 chars so a terse Id can't shadow ordinary scene-object names.
+                    if (string.IsNullOrEmpty(id) || id.Length < 4 || id == "Bismuth") continue;
+                    list.Add(id);
+                }
+            }
+            catch { }
+            // Registry unreadable (UMMCompat quirk) → at least protect the sister mod.
+            if (list.Count == 0) list.Add("Sapphire");
+            return list.ToArray();
+        }
 
         private static bool IsForeignModUi(Component c)
         {
